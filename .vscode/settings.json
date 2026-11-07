@@ -1,0 +1,14 @@
+{
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/src"
+    ],
+    "files.associations": {
+        "*.hpp": "cpp",
+        "*.h": "cpp",
+        "platformio.ini": "ini"
+    },
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+}
