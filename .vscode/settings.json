@@ -1,8 +1,9 @@
 {
     "C_Cpp.default.cppStandard": "c++17",
     "C_Cpp.default.includePath": [
-        "${workspaceFolder}/include",
-        "${workspaceFolder}/src"
+        "${workspaceFolder}/core/include",
+        "${workspaceFolder}/render/include",
+        "${workspaceFolder}/platforms/m5stick"
     ],
     "files.associations": {
         "*.hpp": "cpp",

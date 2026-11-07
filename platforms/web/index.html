@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pwnagotchi-ZeroDay // Web Hacker Toy</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body data-shell="orange">
+  <div class="app-wrap">
+    <!-- Top Workbench Header -->
+    <header class="topbar">
+      <div class="brand-group">
+        <div class="brand-logo">
+          <span class="brand-face-pill" id="header-ascii-face">(o_o)</span>
+          <span>PWNAGOTCHI // ZERODAY</span>
+        </div>
+        <span class="sandbox-badge" title="100% browser-safe simulated 2.4 GHz playground">
+          PLAYFUL RF TOY &bull; ZERO LOW-LEVEL ACCESS
+        </span>
+      </div>
+
+      <div class="toolbar-controls">
+        <select id="select-resolution" class="tool-select" title="Switch Target Hardware Display Profile">
+          <option value="plus">240&times;135 (StickC Plus2 / Cardputer)</option>
+          <option value="compact">160&times;80 (StickC Classic)</option>
+          <option value="micro">128&times;64 (SSD1306 OLED)</option>
+          <option value="epaper">250&times;122 (2.13" e-Paper HAT)</option>
+          <option value="wide">320&times;240 (Core2 / CYD QVGA)</option>
+        </select>
+
+        <select id="select-shell" class="tool-select" title="Hardware Casing Color">
+          <option value="orange">Shell: M5 Orange</option>
+          <option value="stealth">Shell: Stealth Black</option>
+          <option value="paper">Shell: Classic E-Ink</option>
+          <option value="atomic">Shell: Atomic Cyber</option>
+        </select>
+
+        <select id="select-fx" class="tool-select" title="Display Overlay Effect">
+          <option value="grid">FX: LCD Pixel Grid</option>
+          <option value="crt">FX: CRT Scanlines</option>
+          <option value="clean">FX: Crisp Raw</option>
+        </select>
+
+        <button id="btn-sfx" class="tool-chip" type="button" title="Toggle M5Stick Piezo Buzzer Chirps">
+          SFX: OFF
+        </button>
+
+        <button id="btn-snap-png" class="tool-chip" type="button" title="Download 4x Pixel-Art PNG Screenshot">
+          Snap PNG
+        </button>
+
+        <button id="btn-copy-ascii" class="tool-chip" type="button" title="Copy ASCII Screen Frame to Clipboard">
+          Copy ASCII
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workbench Grid -->
+    <main class="workbench-grid">
+      <!-- Left Column: Pocket Hardware Unit -->
+      <section class="stage-column">
+        <div class="panel-card hardware-stage">
+          <!-- Top Edge Physical Side Button B -->
+          <div class="side-btn-row">
+            <button
+              id="hw-btn-b"
+              class="hw-side-btn"
+              type="button"
+              title="Short click: Scan WiFi | Hold 0.7s: Cycle Theme"
+            >
+              [B] SCAN / HOLD THEME
+              <span id="btn-b-progress" class="hold-progress"></span>
+            </button>
+          </div>
+
+          <!-- M5StickC Plus2 / Pocket Cyberdeck Casing -->
+          <div class="m5-chassis">
+            <div class="m5-bezel">
+              <div class="bezel-top-meta">
+                <div class="led-cluster">
+                  <span id="status-led" class="status-led"></span>
+                  <span id="led-label">IDLE &bull; 2.4GHZ</span>
+                </div>
+                <span id="dims-badge">240&times;135 RGB565</span>
+              </div>
+
+              <div id="screen-viewport" class="screen-viewport" data-fx="grid" title="Click ZeroDay's face to pet/boop!">
+                <canvas id="pwn-screen" width="960" height="540"></canvas>
+                <div class="screen-fx-overlay"></div>
+                <div id="floating-fx" class="floating-fx-layer"></div>
+              </div>
+
+              <div class="bezel-bottom-meta">
+                <span>PWNAGOTCHI-ZERODAY</span>
+                <span id="env-indicator">ENV: CYBER CAFE</span>
+              </div>
+            </div>
+
+            <!-- Right Deck: Tactile Front M5 Button (Button A) -->
+            <div class="m5-right-deck">
+              <button
+                id="hw-btn-a"
+                class="hw-front-btn"
+                type="button"
+                title="Button A: Cycle Views (Pet Face -> Radar -> Spectrum) & Wake Pet"
+              >
+                <span class="m5-mark">M5</span>
+                <span class="m5-sub">[A] VIEW</span>
+              </button>
+              <div class="chassis-vent" aria-hidden="true">
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Screen Views & Theme Cycle Dock -->
+          <div class="stage-dock">
+            <div class="seg-group" role="tablist" aria-label="Display Page">
+              <button class="seg-btn active" data-page="PetFace" type="button">Pet Face</button>
+              <button class="seg-btn" data-page="NearbyRadar" type="button">WiFi Radar</button>
+              <button class="seg-btn" data-page="ChannelSpectrum" type="button">Ch Spectrum</button>
+            </div>
+
+            <div class="theme-cycler" aria-label="Cycle Themes">
+              <button
+                id="btn-theme-prev"
+                class="theme-step-btn"
+                type="button"
+                title="Previous Theme (Shift+T)"
+                aria-label="Previous Theme"
+              >
+                &lsaquo;
+              </button>
+              <span id="active-theme-label" class="active-theme-pill">Paper Ink &bull; 1/10</span>
+              <button
+                id="btn-theme-next"
+                class="theme-step-btn"
+                type="button"
+                title="Next Theme (T / Hold B)"
+                aria-label="Next Theme"
+              >
+                &rsaquo;
+              </button>
+            </div>
+          </div>
+
+          <div id="swatch-row" class="swatch-row" aria-label="Color Themes"></div>
+
+          <div class="hotkey-bar">
+            Hotkeys:
+            <kbd>A</kbd> View
+            <kbd>B</kbd> Scan
+            <kbd>T</kbd> / <kbd>Shift+T</kbd> Theme
+            <kbd>F</kbd> Feed Snack
+            <kbd>H</kbd> Sim Handshake
+            <kbd>P</kbd> Summon Peer
+            &bull; Click screen face to boop!
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Column: Hacker Toy Controls -->
+      <section class="toy-column">
+        <!-- Card 1: Pet Handle, XP Rank & Playful Hacker Actions -->
+        <div class="panel-card">
+          <div class="card-header">
+            <h2 class="card-title">Tamagotchi // Hacker Deck</h2>
+            <span id="rank-pill" class="level-pill">Lv.1 Packet Sprout</span>
+          </div>
+
+          <div class="identity-row">
+            <div class="name-edit-group">
+              <span class="prompt-prefix">HANDLE:</span>
+              <input
+                id="input-pet-name"
+                class="pet-name-input"
+                type="text"
+                maxlength="12"
+                value="zeroday"
+                aria-label="Pwnagotchi Name"
+              />
+              <span class="card-sub">&gt;</span>
+            </div>
+            <span id="xp-label" class="card-sub">0 / 40 XP</span>
+          </div>
+
+          <div class="xp-track" title="Playful Hacker Toy XP">
+            <div id="xp-fill" class="xp-fill"></div>
+          </div>
+
+          <div class="stats-mini-grid">
+            <div class="stat-box">
+              <div id="stat-pwns" class="stat-val">0</div>
+              <div class="stat-lbl">TOY PWNS</div>
+            </div>
+            <div class="stat-box">
+              <div id="stat-snacks" class="stat-val">0</div>
+              <div class="stat-lbl">SNACKS</div>
+            </div>
+            <div class="stat-box">
+              <div id="stat-peers" class="stat-val">0</div>
+              <div class="stat-lbl">PEERS MET</div>
+            </div>
+            <div class="stat-box">
+              <div id="stat-peak" class="stat-val">0</div>
+              <div class="stat-lbl">PEAK APs</div>
+            </div>
+          </div>
+
+          <div class="toy-actions-grid">
+            <button id="act-snack" class="toy-btn" type="button">
+              <span>Feed Beacon Snack</span>
+              <span class="kbd-hint">F</span>
+            </button>
+            <button id="act-pwn" class="toy-btn" type="button">
+              <span>Sim Toy Handshake</span>
+              <span class="kbd-hint">H</span>
+            </button>
+            <button id="act-peer" class="toy-btn" type="button">
+              <span>Summon Peer Unit</span>
+              <span class="kbd-hint">P</span>
+            </button>
+            <button id="act-scan" class="toy-btn" type="button">
+              <span>Sweep 2.4GHz Now</span>
+              <span class="kbd-hint">B</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Card 2: Simulated 2.4 GHz Airwaves -->
+        <div class="panel-card">
+          <div class="card-header">
+            <h2 class="card-title">Simulated 2.4 GHz Airspace</h2>
+            <span class="card-sub">Drives pet mood &amp; radar</span>
+          </div>
+
+          <div id="env-grid" class="env-grid">
+            <button class="env-card active" data-env="cafe" type="button">
+              <div class="env-name">Cyber Cafe</div>
+              <div class="env-desc">5-8 cozy APs</div>
+            </button>
+            <button class="env-card" data-env="con" type="button">
+              <div class="env-name">DEF CON Floor</div>
+              <div class="env-desc">14+ wild APs</div>
+            </button>
+            <button class="env-card" data-env="lab" type="button">
+              <div class="env-name">ZeroDay Lab</div>
+              <div class="env-desc">-41dBm bench</div>
+            </button>
+            <button class="env-card" data-env="roam" type="button">
+              <div class="env-name">Auto-Wardrive</div>
+              <div class="env-desc">Roams areas</div>
+            </button>
+            <button class="env-card" data-env="quiet" type="button">
+              <div class="env-name">Night Suburb</div>
+              <div class="env-desc">1-2 faint APs</div>
+            </button>
+            <button class="env-card" data-env="bunker" type="button">
+              <div class="env-name">Faraday Cage</div>
+              <div class="env-desc">0 AP silence</div>
+            </button>
+          </div>
+
+          <div class="power-bar">
+            <div class="power-slider-wrap">
+              <label for="input-battery">BAT:</label>
+              <input id="input-battery" type="range" min="5" max="100" value="96" />
+              <span id="battery-val">96%</span>
+            </div>
+            <label style="cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+              <input id="input-charging" type="checkbox" checked />
+              <span>USB Charging (+)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Card 3: Custom Fake Beacon Injector -->
+        <div class="panel-card">
+          <div class="card-header">
+            <h2 class="card-title">Fake Beacon Broadcaster</h2>
+            <button id="btn-clear-aps" class="mini-btn" type="button" style="padding: 2px 7px; font-size: 10px;">
+              Clear Custom
+            </button>
+          </div>
+
+          <form id="form-beacon" class="beacon-form">
+            <div class="beacon-row">
+              <input
+                id="input-ssid"
+                class="ssid-input"
+                type="text"
+                maxlength="28"
+                placeholder="SSID (e.g. PrettyFlyForAWiFi)"
+              />
+              <button id="btn-rand-ssid" class="mini-btn" type="button" title="Roll a funny hacker SSID">
+                Random
+              </button>
+            </div>
+
+            <div class="beacon-row" style="align-items: center; justify-content: space-between;">
+              <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <select id="input-ap-ch" class="tool-select" aria-label="WiFi Channel">
+                  <option value="1">CH 01</option>
+                  <option value="3">CH 03</option>
+                  <option value="6" selected>CH 06</option>
+                  <option value="9">CH 09</option>
+                  <option value="11">CH 11</option>
+                  <option value="13">CH 13</option>
+                </select>
+
+                <label style="font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 4px;">
+                  <input id="input-ap-rssi" type="range" min="-92" max="-32" value="-44" style="width: 78px;" />
+                  <span id="ap-rssi-label">-44dB</span>
+                </label>
+
+                <label style="font-size: 11px; color: var(--text-muted); cursor: pointer;">
+                  <input id="input-ap-sec" type="checkbox" checked />
+                  WPA2*
+                </label>
+              </div>
+
+              <button class="mini-btn primary" type="submit">+ Broadcast</button>
+            </div>
+          </form>
+
+          <div id="custom-ap-list" class="custom-ap-tags"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Interactive Serial Monitor -->
+    <section class="terminal-card" aria-label="Serial Monitor Console">
+      <div class="terminal-topbar">
+        <div class="term-dots">
+          <i style="background: #ff5f56;"></i>
+          <i style="background: #ffbd2e;"></i>
+          <i style="background: #27c93f;"></i>
+          <span style="margin-left: 6px;">/dev/ttyACM0 @ 115200 &mdash; Interactive ZeroDay Shell (type <strong>help</strong>)</span>
+        </div>
+        <button id="btn-term-ascii" class="mini-btn" type="button" style="padding: 2px 8px; font-size: 10px;">
+          Print ASCII Frame
+        </button>
+      </div>
+
+      <div id="term-log" class="term-log"></div>
+
+      <form id="form-terminal" class="terminal-input-row">
+        <span id="term-prompt-label" class="term-prompt">zeroday@ttyACM0:~$</span>
+        <input
+          id="input-terminal"
+          class="term-input"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Try: help, scan, env con, pwn, peer, snack, inject WuTangLAN, ascii..."
+        />
+      </form>
+    </section>
+  </div>
+
+  <!-- Pure Functional Core + Imperative Web Shell (works via file:// and http://) -->
+  <script src="./js/fp.js"></script>
+  <script src="./js/wifi_analysis.js"></script>
+  <script src="./js/themes.js"></script>
+  <script src="./js/pet_logic.js"></script>
+  <script src="./js/ui_model.js"></script>
+  <script src="./js/airwaves_sim.js"></script>
+  <script src="./js/canvas_gfx.js"></script>
+  <script src="./js/buzzer_sfx.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>

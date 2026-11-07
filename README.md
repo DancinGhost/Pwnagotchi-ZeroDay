@@ -1,71 +1,114 @@
 # Pwnagotchi-ZeroDay
 Pwnagotchi, our way zero day
 
-A Pwnagotchi-inspired virtual pet UI and 2.4 GHz WiFi scanner written in **C++17** for the **M5Stick** family (**M5StickC**, **M5StickC Plus**, and **M5StickC Plus2**), built around a **Functional Core, Imperative Shell** architecture.
+<p align="center">
+  <img src="assets/web_toy_preview.png" alt="Pwnagotchi-ZeroDay Web Port & Pocket Cyberdeck" width="620" />
+</p>
+
+A cross-platform Pwnagotchi-inspired virtual pet UI and 2.4 GHz WiFi scanner written in portable **C++17**, built around a **Functional Core, Imperative Shell** architecture that runs across **ESP32 / M5Stack handhelds**, **native desktop / Linux SBC terminals**, and the **browser**.
 
 ---
 
 ## Features
 
-- **Expressive Pwnagotchi-Style Faces**: Custom crisp vector/pixel expressions (`Awake`, `LookingLeft`, `LookingRight`, `Happy`, `Excited`, `Cool`, `Lonely`, `Bored`, `Sleepy`) rendered tear-free via double-buffered `M5Canvas` sprites.
-- **Dynamic Status Phrases**: Deterministic pure PRNG selects mood-aware phrases and live scan commentary (`zeroday>`).
-- **Non-Blocking WiFi Scanning**: Uses asynchronous `WiFi.scanNetworks(true, true)` so animations and button inputs remain smooth while scanning channels 1–13.
+- **10 Original, Trademark-Clean Themes**: Cycle forward and backward through `Paper Ink`, `Dark Ink`, `ZeroDay`, `Phosphor`, `Neon Noir` (magenta/cyan neon nightlife), `Neon Volt` (acid-yellow/cyan visor), `Operator` (cobalt-blue & steel security workstation), `Red Team` (night-ops red), `Amber CRT`, and `Sunset Grid` — complete with an on-screen toast overlay, pet reactions, and NVS/local persistence. See [docs/THEMES.md](docs/THEMES.md).
+- **Expressive Pwnagotchi-Style Faces**: Crisp vector/pixel expressions (`Awake`, `LookingLeft`, `LookingRight`, `Happy`, `Excited`, `Cool`, `Lonely`, `Bored`, `Sleepy`) rendered tear-free via `zd::render::paintUiFrame`.
+- **Non-Blocking WiFi Scanning**: Pure functional scan pipeline sanitizes SSIDs, deduplicates mesh BSSIDs, builds channel 1–13 histograms, and drives mood & commentary without blocking animations or inputs.
 - **Three Switchable Views**:
-  1. **Pet Face View**: Classic Pwnagotchi split layout with face, mood badge, word-wrapped status phrase, strongest SSID spotlight, and telemetry bars.
-  2. **Nearby WiFi Radar**: Top deduplicated access points sorted by signal strength with 4-bar signal meters, security indicator (`*`), channel, and RSSI.
+  1. **Pet Face View**: Split layout with animated face, mood badge, word-wrapped `zeroday>` status phrase, strongest SSID spotlight, and telemetry bars.
+  2. **Nearby WiFi Radar**: Top deduplicated access points sorted by RSSI with 4-bar signal meters, security indicator (`*`), channel, and dBm readout.
   3. **Channel Spectrum**: 2.4 GHz channels 1–13 bar histogram with open vs. secured AP counts.
-- **Four Display Themes**: `PaperInk` (classic e-ink look), `DarkInk`, `ZeroDayCyan`, and `PhosphorGreen`.
-- **Responsive Layout**: Automatically adapts between `240x135` (M5StickC Plus / Plus2) and `160x80` (original M5StickC).
+- **Multi-Device Responsive Layout**: Automatically scales from `128×64` micro OLEDs and `160×80` M5StickC up through `240×135` StickC Plus2 / Cardputer, `250×122` 2.13" e-Paper HATs, and `320×240`+ QVGA cyberdecks (`M5Stack Core2`, `CYD`, `T-Deck`), including built-in RGB565, RGB888, and 1-bit monochrome framebuffer export. See [docs/PORTING.md](docs/PORTING.md).
 
 ---
 
-## Architecture (Functional Core, Imperative Shell)
+## Cross-Platform Repository Layout
 
-All domain logic outside direct hardware library calls uses **pure functional programming**:
-
-- `include/fp.hpp` — Higher-order functional combinators (`fp::pipe`, `fp::map`, `fp::filter`, `fp::foldl`, `fp::sortBy`, `fp::take`, `fp::Overloaded`, and stateless `xorshift32` PRNG threading).
-- `include/domain.hpp` — Immutable value structs (`AccessPoint`, `ScanSummary`, `AppState`) and algebraic event sum types (`std::variant<...> AppEvent`).
-- `include/wifi_analysis.hpp` — Pure functional pipeline that sanitizes, sorts, deduplicates mesh BSSIDs, builds channel histograms, and summarizes scan results.
-- `include/pet_logic.hpp` — Pure Elm/Redux-style reducer `reduce(const AppState&, const AppEvent&) -> AppState`, mood derivation, face mapping, and phrase selection.
-- `include/ui_model.hpp` — Pure responsive UI view-model projection `buildUiFrame(const AppState&, ScreenDimensions) -> UiFrame` and word-wrapping.
-- `src/main.cpp` — Thin imperative shell interfacing with `M5Unified`, Arduino `WiFi`, and `Serial`.
+```text
+core/include/zd/              # Zero-dependency C++17 Functional Core & HAL
+  ├── fp.hpp                  # Higher-order combinators & stateless xorshift32 PRNG
+  ├── domain.hpp              # Immutable AppState, ThemeId & semantic AppEvents
+  ├── theme.hpp               # Single-source-of-truth 10-theme catalog & color helpers
+  ├── wifi_analysis.hpp       # Pure scan sanitization, deduplication & histograms
+  ├── pet_logic.hpp           # Pure Elm/Redux reducer: reduce(AppState, AppEvent)
+  ├── ui_model.hpp            # Responsive multi-device layout & ASCII frame renderer
+  └── hal.hpp                 # Portable HAL interfaces, CLI parser & PlatformSession
+render/include/zd/render/     # Hardware-agnostic immediate-mode renderer
+  ├── painter.hpp             # Templated paintUiFrame<Gfx> (M5GFX, LovyanGFX, etc.)
+  └── surface_rgb565.hpp      # Zero-dep RGB565 framebuffer + 5x7 font + 1-bit export
+platforms/                    # Device & OS shells
+  ├── m5stick/main.cpp        # ESP32 + M5Unified + WiFi + NVS Preferences + Serial CLI
+  ├── native/main.cpp         # Desktop / Linux / RPi CLI simulator & PPM exporter (zd_sim)
+  └── web/                    # Standalone HTML5 Canvas pocket cyberdeck port
+tests/                        # Automated host & cross-language parity test suites
+docs/                         # Theme design rules (THEMES.md) & porting guide (PORTING.md)
+```
 
 ---
 
-## Hardware Controls
+## Controls
 
-| Control | Action |
+| Input | Action |
 | :--- | :--- |
-| **Button A (Front `M5`)** | Cycle screen views (`Pet Face` -> `WiFi Radar` -> `Channel Spectrum`) & wake pet |
-| **Button B (Side, short press)** | Trigger an immediate WiFi scan |
-| **Button B (Side, hold ~0.7s)** | Cycle color themes (`PaperInk` -> `DarkInk` -> `ZeroDayCyan` -> `PhosphorGreen`) |
+| **Button A (Front `M5`)** / `A` | Cycle screen views (`Pet Face` -> `WiFi Radar` -> `Channel Spectrum`) & wake pet |
+| **Button B (Short press)** / `B` | Trigger an immediate WiFi scan |
+| **Button B (Hold ~0.7s)** / `T` | Cycle to **next** theme (shows toast & persists to flash/storage) |
+| **Power Click or Button C** / `Shift+T` | Cycle to **previous** theme |
+| **Serial / Native / Web CLI** | `themes`, `theme [next\|prev\|<key>]`, `view [next\|prev]`, `scan`, `ascii`, `status` |
 
 ---
 
-## Getting Started (VSCode + PlatformIO)
+## Building & Running
 
-1. Open this folder (`Pwnagotchi-ZeroDay`) as your workspace in **VSCode / Antigravity**.
-2. Install the recommended **PlatformIO IDE** extension (`platformio.platformio-ide`).
-3. Build and upload to your board:
-   - **M5StickC / M5StickC Plus**:
-     ```bash
-     pio run -e m5stick-c --target upload
-     ```
-   - **M5StickC Plus2**:
-     ```bash
-     pio run -e m5stick-c-plus2 --target upload
-     ```
-4. Monitor serial output (`115200` baud):
-   ```bash
-   pio device monitor -b 115200
-   ```
-
-### Running Host Unit Tests (No Hardware Needed)
-
-Because all application logic and UI layout calculations are pure C++17 functions, you can test them directly on your computer with `g++`:
+### 1. Embedded Firmware (PlatformIO)
 
 ```bash
-mkdir -p build
-g++ -std=c++17 -Wall -Wextra -Werror -Iinclude test/test_functional_core.cpp -o build/test_functional_core
-./build/test_functional_core
+# M5StickC (160x80) / M5StickC Plus (240x135)
+pio run -e m5stick-c --target upload
+
+# M5StickC Plus2 (240x135, 8MB Flash)
+pio run -e m5stick-c-plus2 --target upload
+
+# M5Stack Core2 (320x240 QVGA)
+pio run -e m5stack-core2 --target upload
+
+# Serial monitor + interactive CLI (try typing: themes, theme neon, theme operator)
+pio device monitor -b 115200
+```
+
+### 2. Native Desktop / Linux Simulator (`zd_sim`) & Unit Tests
+
+Build and run all C++ core tests, software framebuffer/HAL tests, and Web/C++ parity tests with `make` (or `cmake`):
+
+```bash
+make test
+```
+
+Preview every theme in truecolor ANSI right in your terminal, or export a pixel-accurate `.ppm` screenshot for any device profile (`micro`, `compact`, `plus`, `epaper`, `wide`):
+
+```bash
+make demo
+./build/zd_sim --theme neon --size plus
+./build/zd_sim --theme operator --size wide --ppm build/operator_wide.ppm
+```
+
+With CMake + CTest:
+
+```bash
+cmake -B build && cmake --build build && ctest --test-dir build --output-on-failure
+```
+
+### 3. Web Port (Browser Pocket Cyberdeck)
+
+Open [`platforms/web/index.html`](platforms/web/index.html) directly in any browser (`file://` works with zero build step), or serve locally:
+
+```bash
+make web-serve
+# Visit http://localhost:8080
+```
+
+Run the Web Port & C++ theme catalog parity tests directly with Node.js:
+
+```bash
+node platforms/web/test_web_core.js
 ```

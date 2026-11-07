@@ -2,9 +2,9 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Test Functional Core (Host g++)",
+            "label": "Test All Targets (C++ Core, Painter & Web Parity)",
             "type": "shell",
-            "command": "mkdir -p build && g++ -std=c++17 -Wall -Wextra -Werror -Iinclude test/test_functional_core.cpp -o build/test_functional_core && ./build/test_functional_core",
+            "command": "make test",
             "group": {
                 "kind": "test",
                 "isDefault": true
@@ -12,6 +12,21 @@
             "problemMatcher": [
                 "$gcc"
             ]
+        },
+        {
+            "label": "Run Desktop Simulator (zd_sim --demo)",
+            "type": "shell",
+            "command": "make demo",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "Serve Web Port (localhost:8080)",
+            "type": "shell",
+            "command": "make web-serve",
+            "isBackground": true,
+            "problemMatcher": []
         },
         {
             "label": "PlatformIO: Build (M5StickC / Plus)",
@@ -29,6 +44,15 @@
             "label": "PlatformIO: Build (M5StickC Plus2)",
             "type": "shell",
             "command": "pio run -e m5stick-c-plus2",
+            "group": "build",
+            "problemMatcher": [
+                "$platformio"
+            ]
+        },
+        {
+            "label": "PlatformIO: Build (M5Stack Core2)",
+            "type": "shell",
+            "command": "pio run -e m5stack-core2",
             "group": "build",
             "problemMatcher": [
                 "$platformio"

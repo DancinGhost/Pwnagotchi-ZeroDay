@@ -55,12 +55,24 @@ enum class ScreenPage : uint8_t {
 };
 
 // Color palette themes cycled via Button B long-press.
+// Values are contiguous indices into the theme catalog (see theme.hpp); append new
+// themes immediately before `Count_` and add a matching row to `kThemeCatalog`.
+// Persist themes by their string `key` (not this numeric value) so reordering is safe.
 enum class ThemeId : uint8_t {
     PaperInk = 0,     // High-contrast e-paper look (dark ink on warm light canvas)
     DarkInk,          // Crisp white ink on deep black
     ZeroDayCyan,      // Cyber cyan on midnight background
-    PhosphorGreen     // Retro CRT green phosphor on black
+    PhosphorGreen,    // Retro CRT green phosphor on black
+    NeonNoir,         // Rain-soaked neon city vibe: hot magenta + electric cyan on violet-black
+    NeonVolt,         // High-voltage visor vibe: acid yellow + electric cyan on carbon-black
+    OperatorBlue,     // Pentest-workstation vibe: cool steel text, cobalt blue accents, red alerts
+    RedTeam,          // Night-ops red on black (preserves dark-adapted vision)
+    AmberCrt,         // Vintage amber monochrome terminal
+    SunsetGrid,       // Retro synthwave sunset: warm orange + pink on deep purple
+    Count_            // Sentinel: number of themes (not a real theme)
 };
+
+constexpr std::size_t kThemeCount = static_cast<std::size_t>(ThemeId::Count_);
 
 // Complete immutable application state value.
 struct AppState {
@@ -81,6 +93,7 @@ struct AppState {
     Mood mood = Mood::Awake;
     ScreenPage page = ScreenPage::PetFace;
     ThemeId theme = ThemeId::PaperInk;
+    uint32_t themeToastUntilMs = 0;  // Show the "theme changed" overlay until this uptime
     std::string petName = "zeroday";
     std::string phrase = "Hello world! Ready to scan.";
     ScanSummary latestScan{};
@@ -115,12 +128,46 @@ struct ScanCompletedEvent {
     std::vector<AccessPoint> rawNetworks;
 };
 
+// --- Device-agnostic semantic input events ---
+// Platforms with more inputs than the 2-button M5Stick (keyboards, touch, encoders,
+// D-pads, serial CLI, web UI) map their controls onto these instead of fake button presses.
+
+// Step through screen pages. step = +1 (next) or -1 (previous); wraps around.
+struct CyclePageEvent {
+    uint32_t nowMs;
+    int8_t step = 1;
+};
+
+// Jump directly to a specific screen page (e.g. touch tab bar or hotkey).
+struct SetPageEvent {
+    uint32_t nowMs;
+    ScreenPage page;
+};
+
+// Step through the theme catalog. step = +1 (next) or -1 (previous); wraps around.
+struct CycleThemeEvent {
+    uint32_t nowMs;
+    int8_t step = 1;
+};
+
+// Jump directly to a theme (e.g. restored from persistent storage or picked in a menu).
+// `announce` = false suppresses the on-screen theme toast (useful at boot).
+struct SetThemeEvent {
+    uint32_t nowMs;
+    ThemeId theme;
+    bool announce = true;
+};
+
 using AppEvent = std::variant<
     TickEvent,
     ButtonAPressedEvent,
     ButtonBPressedEvent,
     ButtonBLongPressedEvent,
     ScanStartedEvent,
-    ScanCompletedEvent>;
+    ScanCompletedEvent,
+    CyclePageEvent,
+    SetPageEvent,
+    CycleThemeEvent,
+    SetThemeEvent>;
 
 }  // namespace zd

@@ -7,6 +7,7 @@
 
 #include "domain.hpp"
 #include "fp.hpp"
+#include "theme.hpp"
 #include "wifi_analysis.hpp"
 
 namespace zd {
@@ -76,31 +77,24 @@ constexpr FaceDescriptor faceForMood(Mood mood) {
     return {EyeGlyph::RoundCenter, MouthGlyph::DoubleSmile, false, false, false, "(o_o)", "AWAKE"};
 }
 
-// Pure cycle helpers for screen pages and themes.
-constexpr ScreenPage nextPage(ScreenPage current) {
-    switch (current) {
-        case ScreenPage::PetFace:
-            return ScreenPage::NearbyRadar;
-        case ScreenPage::NearbyRadar:
-            return ScreenPage::ChannelSpectrum;
-        case ScreenPage::ChannelSpectrum:
-            return ScreenPage::PetFace;
-    }
-    return ScreenPage::PetFace;
+// Pure cycle helpers for screen pages. (Theme cycling lives in theme.hpp: nextTheme/prevTheme.)
+constexpr bool isValidPage(ScreenPage p) {
+    return static_cast<uint8_t>(p) <= static_cast<uint8_t>(ScreenPage::ChannelSpectrum);
 }
 
-constexpr ThemeId nextTheme(ThemeId current) {
-    switch (current) {
-        case ThemeId::PaperInk:
-            return ThemeId::DarkInk;
-        case ThemeId::DarkInk:
-            return ThemeId::ZeroDayCyan;
-        case ThemeId::ZeroDayCyan:
-            return ThemeId::PhosphorGreen;
-        case ThemeId::PhosphorGreen:
-            return ThemeId::PaperInk;
-    }
-    return ThemeId::PaperInk;
+constexpr ScreenPage cyclePage(ScreenPage current, int step) {
+    constexpr int kPageCount = 3;
+    const int base = isValidPage(current) ? static_cast<int>(current) : 0;
+    const int idx = ((base + (step % kPageCount)) % kPageCount + kPageCount) % kPageCount;
+    return static_cast<ScreenPage>(idx);
+}
+
+constexpr ScreenPage nextPage(ScreenPage current) {
+    return cyclePage(current, +1);
+}
+
+constexpr ScreenPage prevPage(ScreenPage current) {
+    return cyclePage(current, -1);
 }
 
 // Pure derivation of pet mood from the latest WiFi scan metrics.
@@ -224,6 +218,60 @@ inline fp::RngPick<std::string> selectPhrase(Mood mood, const ScanSummary& scan,
     return {"Ready.", fp::nextSeed(seed)};
 }
 
+// Pure phrase the pet says when it gets a fresh coat of paint.
+inline fp::RngPick<std::string> selectThemePhrase(ThemeId theme, uint32_t seed) {
+    const std::string name = themeSpec(theme).name;
+    const uint32_t s1 = fp::nextSeed(seed);
+    switch (s1 % 4u) {
+        case 0u:
+            return {"New look: " + name + "!", s1};
+        case 1u:
+            return {"Ooh, " + name + " suits me.", s1};
+        case 2u:
+            return {"Repainted in " + name + "~", s1};
+        default:
+            return {"Fresh pixels! " + name + " mode.", s1};
+    }
+}
+
+// Pure page transition shared by ButtonA and semantic page events.
+inline AppState applyPage(const AppState& state, ScreenPage page, uint32_t nowMs) {
+    AppState next = state;
+    next.uptimeMs = nowMs;
+    next.lastInteractionMs = nowMs;
+    next.page = isValidPage(page) ? page : state.page;
+    if (!next.isScanning && next.mood == Mood::Sleepy) {
+        next.mood = next.hasScannedOnce ? deriveMoodFromScan(next.latestScan) : Mood::Awake;
+        const auto picked = selectPhrase(next.mood, next.latestScan, next.rngSeed);
+        next.phrase = picked.value;
+        next.rngSeed = picked.nextSeed;
+        next.lastPhraseChangeMs = nowMs;
+    }
+    return next;
+}
+
+// Pure theme transition shared by every theme-changing event.
+inline AppState applyTheme(const AppState& state, ThemeId theme, uint32_t nowMs, bool announce) {
+    AppState next = state;
+    next.uptimeMs = nowMs;
+    next.lastInteractionMs = nowMs;
+    next.theme = isValidTheme(theme) ? theme : state.theme;
+    if (announce) {
+        next.themeToastUntilMs = nowMs + kThemeToastMs;
+        if (next.themeToastUntilMs == 0u) {
+            next.themeToastUntilMs = 1u;  // 0 is reserved for "no toast"
+        }
+        // Keep scan commentary intact while the radio is busy.
+        if (!next.isScanning) {
+            const auto picked = selectThemePhrase(next.theme, next.rngSeed);
+            next.phrase = picked.value;
+            next.rngSeed = picked.nextSeed;
+            next.lastPhraseChangeMs = nowMs;
+        }
+    }
+    return next;
+}
+
 // Pure factory constructing initial boot state.
 inline AppState initialState(uint32_t bootSeed = 0x5EED2026u) {
     AppState s{};
@@ -295,19 +343,15 @@ inline AppState reduce(const AppState& state, const AppEvent& event) {
             },
 
             [&](const ButtonAPressedEvent& ev) -> AppState {
-                AppState next = state;
-                next.uptimeMs = ev.nowMs;
-                next.lastInteractionMs = ev.nowMs;
-                next.page = nextPage(state.page);
-                if (!next.isScanning && next.mood == Mood::Sleepy) {
-                    next.mood = next.hasScannedOnce ? deriveMoodFromScan(next.latestScan)
-                                                    : Mood::Awake;
-                    const auto picked = selectPhrase(next.mood, next.latestScan, next.rngSeed);
-                    next.phrase = picked.value;
-                    next.rngSeed = picked.nextSeed;
-                    next.lastPhraseChangeMs = ev.nowMs;
-                }
-                return next;
+                return applyPage(state, nextPage(state.page), ev.nowMs);
+            },
+
+            [&](const CyclePageEvent& ev) -> AppState {
+                return applyPage(state, cyclePage(state.page, ev.step), ev.nowMs);
+            },
+
+            [&](const SetPageEvent& ev) -> AppState {
+                return applyPage(state, ev.page, ev.nowMs);
             },
 
             [&](const ButtonBPressedEvent& ev) -> AppState {
@@ -321,11 +365,15 @@ inline AppState reduce(const AppState& state, const AppEvent& event) {
             },
 
             [&](const ButtonBLongPressedEvent& ev) -> AppState {
-                AppState next = state;
-                next.uptimeMs = ev.nowMs;
-                next.lastInteractionMs = ev.nowMs;
-                next.theme = nextTheme(state.theme);
-                return next;
+                return applyTheme(state, nextTheme(state.theme), ev.nowMs, true);
+            },
+
+            [&](const CycleThemeEvent& ev) -> AppState {
+                return applyTheme(state, cycleTheme(state.theme, ev.step), ev.nowMs, true);
+            },
+
+            [&](const SetThemeEvent& ev) -> AppState {
+                return applyTheme(state, ev.theme, ev.nowMs, ev.announce);
             },
 
             [&](const ScanStartedEvent& ev) -> AppState {
@@ -351,7 +399,7 @@ inline AppState reduce(const AppState& state, const AppEvent& event) {
                 next.hasScannedOnce = true;
                 next.lastScanCompleteMs = ev.nowMs;
                 next.completedScans = state.completedScans + 1u;
-                next.latestScan = summarizeScan(ev.rawNetworks, 6u);
+                next.latestScan = summarizeScan(ev.rawNetworks, 12u);
                 if (next.latestScan.totalAps > next.peakApCount) {
                     next.peakApCount = static_cast<uint32_t>(next.latestScan.totalAps);
                 }

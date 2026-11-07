@@ -1,26 +1,28 @@
-// Imperative Hardware Shell for Pwnagotchi-ZeroDay (M5StickC / Plus / Plus2)
-// All domain logic, state transitions, WiFi aggregation, and UI layout live in
-// the pure functional headers under include/. This file only bridges M5Unified,
-// Arduino WiFi, and Serial I/O at the boundary.
+#pragma once
 
-#include "ui_model.hpp"
+// Hardware-agnostic painter: rasterizes a pure `zd::UiFrame` onto any graphics target
+// exposing the M5GFX / LovyanGFX-style immediate-mode API. Works unchanged with
+// M5.Display, M5Canvas sprites, LGFX panels (ESP32-S3/C3/RP2040 boards), M5GFX's SDL
+// desktop backend, or a test double.
+//
+// Required `Gfx` operations (colors are RGB565 `uint16_t`, coordinates are ints):
+//   fillScreen(c)                  fillRect(x, y, w, h, c)
+//   fillRoundRect(x, y, w, h, r, c) fillCircle(x, y, r, c)
+//   fillArc(x, y, r0, r1, a0, a1, c) drawLine(x0, y0, x1, y1, c)
+//   setTextColor(fg, bg)           drawString(const char*, x, y)
+//
+// Text layout assumes a 6x8 px monospace font (Font0). Select it on the target *before*
+// calling `paintUiFrame` (font handles are backend-specific, so the painter never does).
 
-#include <Arduino.h>
-#include <M5Unified.h>
-#include <WiFi.h>
-#include <esp_system.h>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
 
-namespace {
+#include "zd/ui_model.hpp"
 
-// Single mutable state cell at the imperative runtime boundary (Elm/Redux style).
-zd::AppState gState = zd::initialState();
-
-M5Canvas gCanvas(&M5.Display);
-bool gCanvasReady = false;
-bool gBtnBLongHandled = false;
-uint32_t gLastRenderMs = 0;
-
-// --- Thin Graphics Primitives Translating Pure UiFrame onto M5GFX / M5Canvas ---
+namespace zd {
+namespace render {
 
 template <typename Gfx>
 void drawFaceBrackets(Gfx& gfx, const zd::FaceGeometry& g, uint16_t color, bool compact) {
@@ -278,16 +280,29 @@ void drawSpectrumPage(Gfx& gfx, const zd::UiFrame& frame) {
                                    : ((bar.channel % 2) == 1);
         if (showLabel) {
             gfx.setTextColor(frame.palette.muted, frame.palette.bg);
-            gfx.drawString(std::to_string(bar.channel).c_str(), bx, frame.chartBaseY + 2);
+            gfx.drawString(std::to_string(bar.channel).c_str(), bx,
+                           frame.chartBaseY + (frame.dims.height < 72 ? 1 : 2));
         }
     }
 }
 
 template <typename Gfx>
+void drawThemeToast(Gfx& gfx, const zd::UiFrame& frame) {
+    const auto& t = frame.toast;
+    if (!t.visible) {
+        return;
+    }
+    const auto& pal = frame.palette;
+    // Accent ring + inverted fill so the toast reads clearly on every theme.
+    gfx.fillRoundRect(t.x - 2, t.y - 2, t.w + 4, t.h + 4, 4, pal.accent);
+    gfx.fillRoundRect(t.x, t.y, t.w, t.h, 3, pal.fg);
+    gfx.setTextColor(pal.bg, pal.fg);
+    gfx.drawString(t.text.c_str(), t.textX, t.textY);
+}
+
+template <typename Gfx>
 void paintUiFrame(Gfx& gfx, const zd::UiFrame& frame) {
     gfx.fillScreen(frame.palette.bg);
-    gfx.setFont(&fonts::Font0);
-    gfx.setTextSize(1);
 
     // Top telemetry bar
     gfx.setTextColor(frame.palette.fg, frame.palette.bg);
@@ -311,136 +326,10 @@ void paintUiFrame(Gfx& gfx, const zd::UiFrame& frame) {
     gfx.drawLine(0, frame.footerDividerY, frame.dims.width - 1, frame.footerDividerY, frame.palette.muted);
     gfx.setTextColor(frame.palette.accent, frame.palette.bg);
     gfx.drawString(frame.footerLine.c_str(), 4, frame.footerTextY);
+
+    // Transient overlays last so they sit on top of everything else
+    drawThemeToast(gfx, frame);
 }
 
-void renderCurrentState() {
-    const zd::ScreenDimensions dims{
-        static_cast<int16_t>(M5.Display.width()),
-        static_cast<int16_t>(M5.Display.height())
-    };
-    const zd::UiFrame frame = zd::buildUiFrame(gState, dims);
-
-    if (gCanvasReady) {
-        paintUiFrame(gCanvas, frame);
-        gCanvas.pushSprite(0, 0);
-    } else {
-        paintUiFrame(M5.Display, frame);
-    }
-}
-
-void logSerialStatus(const char* eventTag) {
-    const zd::FaceDescriptor face = zd::faceForMood(gState.mood);
-    Serial.printf("[%s] %s %s> \"%s\" | APs:%u | BusiestCh:%d\n",
-                  eventTag,
-                  face.asciiFace,
-                  gState.petName.c_str(),
-                  gState.phrase.c_str(),
-                  static_cast<unsigned>(gState.latestScan.totalAps),
-                  static_cast<int>(gState.latestScan.busiestChannel));
-}
-
-std::vector<zd::AccessPoint> collectCompletedWifiScan(int16_t count) {
-    std::vector<zd::AccessPoint> networks;
-    if (count <= 0) {
-        return networks;
-    }
-    networks.reserve(static_cast<std::size_t>(count));
-    for (int16_t i = 0; i < count; ++i) {
-        networks.push_back(zd::AccessPoint{
-            std::string(WiFi.SSID(i).c_str()),
-            static_cast<int32_t>(WiFi.RSSI(i)),
-            static_cast<int32_t>(WiFi.channel(i)),
-            WiFi.encryptionType(i) != WIFI_AUTH_OPEN
-        });
-    }
-    return networks;
-}
-
-}  // namespace
-
-void setup() {
-    auto cfg = M5.config();
-    M5.begin(cfg);
-    Serial.begin(115200);
-
-    // Landscape orientation (240x135 on StickC Plus/Plus2, 160x80 on StickC)
-    M5.Display.setRotation(1);
-    M5.Display.setBrightness(180);
-
-    gCanvas.setColorDepth(16);
-    gCanvasReady = gCanvas.createSprite(M5.Display.width(), M5.Display.height());
-
-    // Configure WiFi in standard non-connected station mode for passive/beacon scanning
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect(true, true);
-
-    // Seed pure functional PRNG with hardware entropy once at startup
-    const uint32_t bootEntropy = esp_random();
-    gState = zd::initialState(bootEntropy);
-
-    renderCurrentState();
-    logSerialStatus("BOOT");
-}
-
-void loop() {
-    M5.update();
-    const uint32_t nowMs = millis();
-
-    // 1. Sample Button A (front M5 button -> cycle display page)
-    if (M5.BtnA.wasPressed()) {
-        gState = zd::reduce(gState, zd::ButtonAPressedEvent{nowMs});
-        logSerialStatus("BTN_A");
-    }
-
-    // 2. Sample Button B (short press -> manual scan, 700ms hold -> cycle theme)
-    if (M5.BtnB.wasPressed()) {
-        gBtnBLongHandled = false;
-    }
-    if (M5.BtnB.isPressed() && !gBtnBLongHandled && M5.BtnB.pressedFor(700)) {
-        gBtnBLongHandled = true;
-        gState = zd::reduce(gState, zd::ButtonBLongPressedEvent{nowMs});
-        logSerialStatus("THEME");
-    }
-    if (M5.BtnB.wasReleased() && !gBtnBLongHandled) {
-        gState = zd::reduce(gState, zd::ButtonBPressedEvent{nowMs});
-        logSerialStatus("BTN_B");
-    }
-
-    // 3. Check if an async WiFi scan finished (or timed out)
-    if (gState.isScanning) {
-        const int16_t scanStatus = WiFi.scanComplete();
-        if (scanStatus >= 0) {
-            std::vector<zd::AccessPoint> raw = collectCompletedWifiScan(scanStatus);
-            WiFi.scanDelete();
-            gState = zd::reduce(gState, zd::ScanCompletedEvent{nowMs, std::move(raw)});
-            logSerialStatus("SCAN_DONE");
-        } else if (scanStatus == WIFI_SCAN_FAILED || (nowMs - gState.lastScanStartMs) > 15000u) {
-            WiFi.scanDelete();
-            gState = zd::reduce(gState, zd::ScanCompletedEvent{nowMs, {}});
-            logSerialStatus("SCAN_EMPTY");
-        }
-    }
-
-    // 4. Start a new async WiFi scan when requested by pure scheduling predicate
-    if (zd::shouldTriggerScan(gState, nowMs)) {
-        WiFi.scanDelete();
-        const int16_t rc = WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);
-        if (rc == WIFI_SCAN_RUNNING || rc >= 0) {
-            gState = zd::reduce(gState, zd::ScanStartedEvent{nowMs});
-            logSerialStatus("SCAN_START");
-        }
-    }
-
-    // 5. Advance pure periodic state tick (battery, eye animation, idle mood)
-    const int32_t batLevel = M5.Power.getBatteryLevel();
-    const bool charging = (M5.Power.isCharging() == m5::Power_Class::is_charging);
-    gState = zd::reduce(gState, zd::TickEvent{nowMs, batLevel, charging});
-
-    // 6. Refresh display at ~20 FPS (50ms frame pacing)
-    if ((nowMs - gLastRenderMs) >= 50u) {
-        gLastRenderMs = nowMs;
-        renderCurrentState();
-    }
-
-    delay(15);
-}
+}  // namespace render
+}  // namespace zd
