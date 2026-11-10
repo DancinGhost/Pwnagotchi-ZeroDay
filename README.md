@@ -5,7 +5,7 @@ Pwnagotchi, our way zero day
   <img src="assets/web_toy_preview.png" alt="pwnagotchi-zeroday Web Port & Pocket Cyberdeck" width="620" />
 </p>
 
-A cross-platform Pwnagotchi-inspired virtual pet UI and 2.4 GHz WiFi scanner written in portable **C++17**, built around a **Functional Core, Imperative Shell** architecture that runs across **ESP32 / M5Stack handhelds**, **native desktop / Linux SBC terminals**, and the **browser**.
+A cross-platform Pwnagotchi-inspired virtual pet UI and 2.4 GHz WiFi scanner written in portable **C++17**, built around a **Functional Core, Imperative Shell** architecture that runs across **ESP32 / M5Stack handhelds**, **native desktop / Linux SBC terminals**, a full **Linux desktop app (CLI/TUI + Qt6 GUI) with real offensive & defensive WiFi tooling**, and the **browser**.
 
 ---
 
@@ -19,6 +19,7 @@ A cross-platform Pwnagotchi-inspired virtual pet UI and 2.4 GHz WiFi scanner wri
   2. **Nearby WiFi Radar**: Top deduplicated access points sorted by RSSI with 4-bar signal meters, security indicator (`*`), channel, and dBm readout.
   3. **Channel Spectrum**: 2.4 GHz channels 1–13 bar histogram with open vs. secured AP counts.
 - **Multi-Device Responsive Layout**: Automatically scales from `128×64` micro OLEDs and `160×80` M5StickC up through `240×135` StickC Plus2 / Cardputer, `250×122` 2.13" e-Paper HATs, and `320×240`+ QVGA cyberdecks (`M5Stack Core2`, `CYD`, `T-Deck`), including built-in RGB565, RGB888, and 1-bit monochrome framebuffer export. See [docs/PORTING.md](docs/PORTING.md).
+- **Linux Desktop App — Real Offensive & Defensive WiFi Tooling**: A CLI/ncurses TUI (`zd-linux`) and a Qt6 GUI (`zd-gui`) over a shared controller. Unprivileged recon (nmcli/iw), live **defensive monitors** (deauth-flood, evil-twin, open-downgrade, karma-beacon detection), and **authorization-gated offensive** capture (WPA handshakes / PMKIDs) and deauth injection via a hybrid **libpcap + aircrack-ng** backend. Every transmit is gated by an explicit authorization + per-BSSID allow-list and written to an audit log. See [docs/LINUX.md](docs/LINUX.md).
 
 ---
 
@@ -32,13 +33,21 @@ core/include/zd/              # Zero-dependency C++17 Functional Core & HAL
   ├── wifi_analysis.hpp       # Pure scan sanitization, deduplication & histograms
   ├── pet_logic.hpp           # Pure Elm/Redux reducer: reduce(AppState, AppEvent)
   ├── ui_model.hpp            # Responsive multi-device layout & ASCII frame renderer
-  └── hal.hpp                 # Portable HAL interfaces, CLI parser & PlatformSession
+  ├── hal.hpp                 # Portable HAL interfaces, CLI parser & PlatformSession
+  ├── secops.hpp              # Pure security engine: SecState reducer, defensive monitors,
+  │                           #   and the transmit authorization gate
+  └── secops_hal.hpp          # Capture/inject/monitor adapter contracts & SecSession
 render/include/zd/render/     # Hardware-agnostic immediate-mode renderer
   ├── painter.hpp             # Templated paintUiFrame<Gfx> (M5GFX, LovyanGFX, etc.)
   └── surface_rgb565.hpp      # Zero-dep RGB565 framebuffer + 5x7 font + 1-bit export
 platforms/                    # Device & OS shells
   ├── m5stick/main.cpp        # ESP32 + M5Unified + WiFi + NVS Preferences + Serial CLI
   ├── native/main.cpp         # Desktop / Linux / RPi CLI simulator & PPM exporter (zd_sim)
+  ├── linux/                  # Linux desktop app: real offensive/defensive WiFi tooling
+  │   ├── backend/            #   hybrid libpcap/libnl + CLI-tool adapters & pure parsers
+  │   ├── app/                #   shared AppController + monotonic clock
+  │   ├── cli/main.cpp        #   ncurses TUI + scriptable subcommands (zd-linux)
+  │   └── gui/                #   Qt6 Widgets dashboard (zd-gui)
   └── web/                    # Standalone HTML5 Canvas pocket cyberdeck port
 tests/                        # Automated host & cross-language parity test suites
 docs/                         # Theme design rules (THEMES.md) & porting guide (PORTING.md)
@@ -98,7 +107,28 @@ With CMake + CTest:
 cmake -B build && cmake --build build && ctest --test-dir build --output-on-failure
 ```
 
-### 3. Web Port (Browser Pocket Cyberdeck)
+### 3. Linux Desktop App — CLI/TUI + Qt6 GUI (real offensive/defensive tooling)
+
+Build both front-ends and run the full host test suite (requires `qt6-base-dev`, `libpcap-dev`,
+`libncurses-dev`, `cmake`; active features use the `aircrack-ng` suite + `iw`/`nmcli`):
+
+```bash
+sudo apt install cmake pkg-config qt6-base-dev libpcap-dev libnl-3-dev libnl-genl-3-dev \
+                 libncurses-dev aircrack-ng iw network-manager
+cmake -B build_cmake && cmake --build build_cmake -j
+ctest --test-dir build_cmake --output-on-failure
+
+./build_cmake/zd-linux scan            # unprivileged recon: live network table
+sudo ./build_cmake/zd-linux watch      # monitor mode: stream defensive alerts
+./build_cmake/zd-gui                    # Qt6 desktop dashboard
+```
+
+> ⚠️ **Authorized use only.** Monitor mode + deauth require root and a monitor-capable adapter.
+> Deauth injection is refused unless you both confirm authorization **and** allow-list the target
+> BSSID, and every transmit is written to an audit log. Only test networks you own or are
+> explicitly authorized to assess. Full details & safety model: [docs/LINUX.md](docs/LINUX.md).
+
+### 4. Web Port (Browser Pocket Cyberdeck)
 
 Open [`platforms/web/index.html`](platforms/web/index.html) directly in any browser (`file://` works with zero build step), or serve locally:
 
@@ -112,3 +142,7 @@ Run the Web Port & C++ theme catalog parity tests directly with Node.js:
 ```bash
 node platforms/web/test_web_core.js
 ```
+
+---
+
+See [ROADMAP.md](ROADMAP.md) for planned features across every platform.

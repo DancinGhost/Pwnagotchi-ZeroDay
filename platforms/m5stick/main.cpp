@@ -109,16 +109,19 @@ public:
     }
 
     void present(const zd::UiFrame& frame) override {
-        if (canvasReady_) {
-            canvas_.setFont(&fonts::Font0);
-            canvas_.setTextSize(1);
-            zd::render::paintUiFrame(canvas_, frame);
-            canvas_.pushSprite(0, 0);
-        } else {
-            M5.Display.setFont(&fonts::Font0);
-            M5.Display.setTextSize(1);
-            zd::render::paintUiFrame(M5.Display, frame);
+        // Sprite-only by design: `paintUiFrame<Gfx>` is a template, so a direct-to-display
+        // fallback branch would instantiate the entire render pipeline a second time (one
+        // full copy per Gfx type), just to cover an allocation failure that essentially
+        // never happens in practice (the sprite is at most 320x240x2 = 150KB against
+        // ~320KB of usable RAM). If it ever does fail, skip the frame rather than pay for
+        // that duplication permanently in flash.
+        if (!canvasReady_) {
+            return;
         }
+        canvas_.setFont(&fonts::Font0);
+        canvas_.setTextSize(1);
+        zd::render::paintUiFrame(canvas_, frame);
+        canvas_.pushSprite(0, 0);
     }
 
 private:
