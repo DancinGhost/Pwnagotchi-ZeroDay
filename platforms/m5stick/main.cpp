@@ -1,4 +1,4 @@
-// Imperative Hardware Shell for Pwnagotchi-ZeroDay (M5StickC / Plus / Plus2, and other
+// Imperative Hardware Shell for pwnagotchi-zeroday (M5StickC / Plus / Plus2, and other
 // M5Unified-supported ESP32 boards such as M5Stack Core / Core2 / Cardputer).
 //
 // All domain logic, state transitions, WiFi aggregation, theming, layout, and session

@@ -299,7 +299,7 @@
     };
   }
 
-  // --- Exact Pwnagotchi-ZeroDay UI Painting Primitives (ported from src/main.cpp) ---
+  // --- Exact pwnagotchi-zeroday UI Painting Primitives (ported from src/main.cpp) ---
 
   function drawFaceBrackets(gfx, g, color, compact) {
     const r = g.bracketHalfHeight + (compact ? 4 : 6);

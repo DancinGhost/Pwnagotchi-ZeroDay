@@ -1,6 +1,6 @@
 # Theme System & Trademark-Clean Palette Guidelines
 
-Pwnagotchi-ZeroDay ships with a data-driven catalog of **10 original color themes** defined in a single portable source of truth: [`core/include/zd/theme.hpp`](../core/include/zd/theme.hpp) (mirrored in [`platforms/web/js/themes.js`](../platforms/web/js/themes.js) and verified automatically by unit tests).
+pwnagotchi-zeroday ships with a data-driven catalog of **10 original color themes** defined in a single portable source of truth: [`core/include/zd/theme.hpp`](../core/include/zd/theme.hpp) (mirrored in [`platforms/web/js/themes.js`](../platforms/web/js/themes.js) and verified automatically by unit tests).
 
 ---
 
@@ -52,7 +52,7 @@ Pwnagotchi-ZeroDay ships with a data-driven catalog of **10 original color theme
 
 ## Copyright & Trademark Policy
 
-To keep Pwnagotchi-ZeroDay 100% clean for open-source distribution and commercial/custom hardware builds:
+To keep pwnagotchi-zeroday 100% clean for open-source distribution and commercial/custom hardware builds:
 
 1. **Generic Descriptive Names Only**: Name themes after moods, lighting, materials, or generic security roles (`Neon Noir`, `Neon Volt`, `Operator`, `Red Team`, `Amber CRT`). **Never** use third-party product names, OS/distro names, game/film titles, or company names in `ThemeId`, `key`, `name`, `blurb`, or CLI aliases.
 2. **No Logos or Branded Glyphs**: Never embed third-party logos, mascots, crests, or trademarked iconography.

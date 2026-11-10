@@ -1,13 +1,13 @@
 # Cross-Platform Architecture & Device Porting Guide
 
-Pwnagotchi-ZeroDay separates **portable pure C++17 domain/UI logic**, **portable immediate-mode pixel rendering**, and **thin device-specific shells** so adding a new microcontroller, handheld cyberdeck, SBC + e-Paper HAT, or desktop app requires writing only ~150–220 lines of glue code.
+pwnagotchi-zeroday separates **portable pure C++17 domain/UI logic**, **portable immediate-mode pixel rendering**, and **thin device-specific shells** so adding a new microcontroller, handheld cyberdeck, SBC + e-Paper HAT, or desktop app requires writing only ~150–220 lines of glue code.
 
 ---
 
 ## Layered Directory Structure
 
 ```text
-Pwnagotchi-ZeroDay/
+pwnagotchi-zeroday/
 ├── core/include/zd/              # Layer 1: Zero-dependency C++17 Functional Core + HAL
 │   ├── fp.hpp                    # Pure higher-order combinators & stateless xorshift32 PRNG
 │   ├── domain.hpp                # Immutable AppState, ThemeId, and semantic AppEvents

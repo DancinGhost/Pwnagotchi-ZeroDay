@@ -1,8 +1,8 @@
-# Pwnagotchi-ZeroDay
+# pwnagotchi-zeroday
 Pwnagotchi, our way zero day
 
 <p align="center">
-  <img src="assets/web_toy_preview.png" alt="Pwnagotchi-ZeroDay Web Port & Pocket Cyberdeck" width="620" />
+  <img src="assets/web_toy_preview.png" alt="pwnagotchi-zeroday Web Port & Pocket Cyberdeck" width="620" />
 </p>
 
 A cross-platform Pwnagotchi-inspired virtual pet UI and 2.4 GHz WiFi scanner written in portable **C++17**, built around a **Functional Core, Imperative Shell** architecture that runs across **ESP32 / M5Stack handhelds**, **native desktop / Linux SBC terminals**, and the **browser**.

@@ -1,4 +1,4 @@
-// Automated Node.js unit tests for the Pwnagotchi-ZeroDay Web Port Functional Core & Pixel Renderer.
+// Automated Node.js unit tests for the pwnagotchi-zeroday Web Port Functional Core & Pixel Renderer.
 'use strict';
 
 const assert = require('assert');

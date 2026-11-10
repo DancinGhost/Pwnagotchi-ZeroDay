@@ -1,4 +1,4 @@
-// Native Desktop / Linux SBC Shell for Pwnagotchi-ZeroDay (Linux / macOS / Windows / RPi).
+// Native Desktop / Linux SBC Shell for pwnagotchi-zeroday (Linux / macOS / Windows / RPi).
 //
 // Runs the exact portable functional core (`core/include/zd/`) and software pixel painter
 // (`render/include/zd/render/`) on any POSIX/Windows host. Ideal for previewing themes,
@@ -198,7 +198,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    std::cout << "Pwnagotchi-ZeroDay desktop simulator. Type 'help' or 'themes'.\n";
+    std::cout << "pwnagotchi-zeroday desktop simulator. Type 'help' or 'themes'.\n";
     printTerminalFrame(session.buildFrame(opt.dims), opt.color);
 
     std::string line;

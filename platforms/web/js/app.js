@@ -1,4 +1,4 @@
-// Imperative Browser Shell for Pwnagotchi-ZeroDay Web Port.
+// Imperative Browser Shell for pwnagotchi-zeroday Web Port.
 // Bridges DOM controls, HTML5 Canvas, WebAudio buzzer, simulated RF airwaves,
 // and the interactive /dev/ttyACM0 serial console onto the pure Functional Core.
 (function () {
@@ -1020,7 +1020,7 @@
   logSerialStatus('BOOT');
   appendLog(
     'WEB_TOY',
-    'Welcome to Pwnagotchi-ZeroDay Web! Click [M5], press [B] to scan, or type "help" below.',
+    'Welcome to pwnagotchi-zeroday Web! Click [M5], press [B] to scan, or type "help" below.',
     'log-cmd'
   );
   renderCurrentState();
