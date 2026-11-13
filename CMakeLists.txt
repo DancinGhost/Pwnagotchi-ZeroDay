@@ -119,6 +119,17 @@ target_include_directories(test_linux_parsers PRIVATE
 target_compile_options(test_linux_parsers PRIVATE ${ZD_WARN_FLAGS})
 add_test(NAME linux_backend_parser_tests COMMAND test_linux_parsers)
 
+# The tests rely on assert(). Release builds define NDEBUG, which would compile every
+# assertion away (making the tests no-ops and tripping -Werror on assert-only variables),
+# so force assertions back on for the test executables regardless of build type.
+foreach(zd_test test_functional_core test_painter test_secops test_linux_parsers)
+    if(MSVC)
+        target_compile_options(${zd_test} PRIVATE /UNDEBUG)
+    else()
+        target_compile_options(${zd_test} PRIVATE -UNDEBUG)
+    endif()
+endforeach()
+
 find_program(NODE_EXECUTABLE node)
 if(NODE_EXECUTABLE)
     add_test(
