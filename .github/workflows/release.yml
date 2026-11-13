@@ -5,14 +5,9 @@ on:
     branches:
       - main
   workflow_dispatch:
-  schedule:
-    - cron: '0 2 * * *'  # 2:00 AM UTC daily
 
 permissions:
   contents: write
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # --------------------------------------------------------------------------------------
@@ -48,10 +43,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
@@ -60,7 +55,7 @@ jobs:
           pip install --upgrade platformio esptool
 
       - name: Cache PlatformIO packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.platformio
           key: pio-${{ runner.os }}-${{ matrix.target.env }}-${{ hashFiles('platformio.ini') }}
@@ -116,7 +111,7 @@ jobs:
           cd ../..
 
       - name: Upload firmware artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware-${{ matrix.target.env }}
           path: pwnagotchi-zd-${{ matrix.target.env }}.zip
@@ -130,7 +125,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -165,7 +160,7 @@ jobs:
           tar -czvf "$TAR_NAME" -C dist/linux-x86_64 .
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64
           path: pwnagotchi-zd-linux-x86_64.tar.gz
@@ -179,7 +174,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Package Web build
         run: |
@@ -190,7 +185,7 @@ jobs:
           zip -j "$ZIP_NAME" LICENSE THIRD_PARTY_NOTICES.md
 
       - name: Upload Web artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-cyberdeck
           path: pwnagotchi-zd-web.zip
@@ -205,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true
@@ -217,7 +212,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Create or Update Canary Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: canary
           name: "pwnagotchi-zeroday Canary Release"
