@@ -186,10 +186,14 @@ inline AuthDecision authorize(const Authorization& auth, const std::string& bssi
     if (!auth.operatorConfirmed) {
         return AuthDecision::BlockedUnconfirmed;
     }
+    // Reject broadcast or empty BSSID to prevent unintended transmission or packet corruption
+    const std::string n = normalizeMac(bssid);
+    if (isBroadcastMac(n)) {
+        return AuthDecision::BlockedNotAllowlisted;
+    }
     if (auth.allowAll) {
         return AuthDecision::Allowed;
     }
-    const std::string n = normalizeMac(bssid);
     if (std::find(auth.allowedBssids.begin(), auth.allowedBssids.end(), n) !=
         auth.allowedBssids.end()) {
         return AuthDecision::Allowed;

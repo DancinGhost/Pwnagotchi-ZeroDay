@@ -1,4 +1,4 @@
-name: Build & Publish Nightly Release
+name: Build & Publish Canary Release
 
 on:
   push:
@@ -10,6 +10,9 @@ on:
 
 permissions:
   contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # --------------------------------------------------------------------------------------
@@ -194,10 +197,10 @@ jobs:
           if-no-files-found: error
 
   # --------------------------------------------------------------------------------------
-  # Job 4: Collate Artifacts, Checksum, and Publish Nightly Release
+  # Job 4: Collate Artifacts, Checksum, and Publish Canary Release
   # --------------------------------------------------------------------------------------
-  publish-nightly:
-    name: Publish Nightly Release
+  publish-canary:
+    name: Publish Canary Release
     needs: [build-firmware, build-linux, build-web]
     runs-on: ubuntu-latest
     steps:
@@ -213,13 +216,13 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Create or Update Nightly Release
+      - name: Create or Update Canary Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly
-          name: "pwnagotchi-zeroday Nightly Release"
+          tag_name: canary
+          name: "pwnagotchi-zeroday Canary Release"
           body: |
-            Automated multi-platform nightly build of **pwnagotchi-zeroday** from branch `main`.
+            Automated multi-platform canary build of **pwnagotchi-zeroday** from branch `main`.
 
             ### Included Artifacts
             - **LILYGO T-Deck Plus**: `pwnagotchi-zd-t-deck-plus.zip` (ESP32-S3, 320x240 ST7789, Touch, Keyboard, GPS)

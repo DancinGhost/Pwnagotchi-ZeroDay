@@ -27,6 +27,8 @@
 #include <vector>
 
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "zd/hal.hpp"
 #include "zd/secops_hal.hpp"
@@ -54,14 +56,15 @@ inline std::string homeDir() {
 }
 
 // Create `dir` and any missing parents (POSIX `mkdir -p`, without spawning a subprocess).
-inline void makeDirRecursive(const std::string& dir) {
+// Defaults to mode 0700 (owner-only access) for secure storage of config & audit files.
+inline void makeDirRecursive(const std::string& dir, mode_t mode = 0700) {
     std::string partial;
     partial.reserve(dir.size());
     for (std::size_t i = 0; i < dir.size(); ++i) {
         partial.push_back(dir[i]);
         if (dir[i] == '/' || i + 1u == dir.size()) {
             if (!partial.empty()) {
-                ::mkdir(partial.c_str(), 0775);  // ignore EEXIST and any other failure here;
+                ::mkdir(partial.c_str(), mode);  // ignore EEXIST and any other failure here;
             }                                    // the subsequent file open() surfaces real errors.
         }
     }
@@ -184,17 +187,28 @@ private:
 
 class CliCaptureSource final : public sec::ICaptureSource {
 public:
+    ~CliCaptureSource() override { stop(); }
+
     bool start(const std::string& monitorIface) override {
         if (running_) {
             return true;
         }
-        // Unique prefix in a temp dir; airodump appends "-01.csv".
-        prefix_ = "/tmp/zd-airodump-" + std::to_string(::getpid()) + "-" +
-                  std::to_string(std::time(nullptr));
+        // Create an isolated private temporary directory (mode 0700) to prevent symlink/TOCTOU
+        // attacks and protect sniffed wireless telemetry on multi-user systems.
+        char templ[] = "/tmp/zd-airodump-XXXXXX";
+        char* d = ::mkdtemp(templ);
+        if (d == nullptr) {
+            return false;
+        }
+        tempDir_ = d;
+        prefix_ = tempDir_ + "/capture";
         csvPath_ = prefix_ + "-01.csv";
         const bool ok = proc_.start({"airodump-ng", "--output-format", "csv", "--write-interval",
                                      "1", "-w", prefix_, monitorIface});
         running_ = ok;
+        if (!ok) {
+            cleanTempDir();
+        }
         return ok;
     }
 
@@ -242,15 +256,30 @@ public:
     void stop() override {
         proc_.stop();
         running_ = false;
-        if (!csvPath_.empty()) {
-            std::remove(csvPath_.c_str());
-        }
+        cleanTempDir();
     }
 
     bool running() const override { return running_ && proc_.running(); }
 
 private:
+    void cleanTempDir() {
+        if (tempDir_.empty()) {
+            return;
+        }
+        if (!csvPath_.empty()) {
+            std::remove(csvPath_.c_str());
+            csvPath_.clear();
+        }
+        std::remove((prefix_ + "-01.kismet.csv").c_str());
+        std::remove((prefix_ + "-01.kismet.netxml").c_str());
+        std::remove((prefix_ + "-01.log.csv").c_str());
+        ::rmdir(tempDir_.c_str());
+        tempDir_.clear();
+        prefix_.clear();
+    }
+
     DetachedProcess proc_;
+    std::string tempDir_;
     std::string prefix_;
     std::string csvPath_;
     std::set<std::string> seenStations_;
@@ -387,9 +416,14 @@ public:
     }
 
     void saveThemeKey(std::string_view key) override {
-        std::ofstream f(path_, std::ios::trunc);
-        if (f) {
-            f << std::string(key.data(), key.size()) << "\n";
+        // Enforce 0600 permissions (read/write only by owner)
+        const int fd = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (fd >= 0) {
+            ::fchmod(fd, 0600);
+            const std::string entry = std::string(key.data(), key.size()) + "\n";
+            const ssize_t written = ::write(fd, entry.data(), entry.size());
+            (void)written;
+            ::close(fd);
         }
     }
 
@@ -408,14 +442,19 @@ public:
     }
 
     void record(const std::string& line) override {
-        std::ofstream f(path_, std::ios::app);
-        if (!f) {
+        // Enforce 0600 permissions so audit trail is private and protected from tampering
+        const int fd = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0600);
+        if (fd < 0) {
             return;
         }
+        ::fchmod(fd, 0600);
         const std::time_t t = std::time(nullptr);
         char ts[32];
         std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
-        f << ts << " " << line << "\n";
+        const std::string entry = std::string(ts) + " " + line + "\n";
+        const ssize_t written = ::write(fd, entry.data(), entry.size());
+        (void)written;
+        ::close(fd);
     }
 
     const std::string& path() const { return path_; }

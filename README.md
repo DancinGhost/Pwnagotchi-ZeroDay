@@ -80,9 +80,9 @@ docs/                         # Theme design rules (THEMES.md) & porting guide (
 
 ---
 
-## Quick Flashing Prebuilt Binaries (Nightly Releases)
+## Quick Flashing Prebuilt Binaries (Canary Releases)
 
-Precompiled firmware and desktop binaries are built automatically on every commit and available on the **[Releases Tab](https://github.com/DancinGhost/pwnagotchi-zeroday/releases)** under `nightly`.
+Precompiled firmware and desktop binaries are built automatically on every commit and available on the **[Releases Tab](https://github.com/DancinGhost/pwnagotchi-zeroday/releases)** under `canary`.
 
 - **In-Browser Web Flasher (Zero Software Installation)**: Open [Espressif Web Flasher](https://espressif.github.io/esptool-js/) in Chrome/Edge, connect your board, set offset to `0x0`, and flash `pwnagotchi-zd-*-factory.bin`.
 - **One-Click Local Flasher**: Download the release zip for your board and run `./flash.sh` (Linux/macOS) or `flash.bat` (Windows).

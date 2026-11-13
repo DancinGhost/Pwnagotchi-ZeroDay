@@ -93,6 +93,9 @@ void testAuthorizationGate() {
     assert(authorize(wild, "aa:bb:cc:dd:ee:ff") == AuthDecision::BlockedUnconfirmed);
     wild.operatorConfirmed = true;
     assert(authorize(wild, "any") == AuthDecision::Allowed);
+    // Broadcast/empty BSSID is always rejected even with wildcard
+    assert(authorize(wild, "ff:ff:ff:ff:ff:ff") == AuthDecision::BlockedNotAllowlisted);
+    assert(authorize(wild, "") == AuthDecision::BlockedNotAllowlisted);
 }
 
 void testApTrackingAndEvilTwin() {

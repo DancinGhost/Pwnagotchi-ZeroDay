@@ -23,7 +23,10 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <Wire.h>
+#include <algorithm>
+#include <cstring>
 #include <esp_random.h>
+#include <string_view>
 
 namespace {
 
@@ -305,18 +308,17 @@ void initGps() {
     gGpsSerial.begin(9600, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
 }
 
-void parseNmeaField(const std::string& line, std::vector<std::string>& fields) {
+// Zero-heap-allocation NMEA field tokenizer using string_view to eliminate heap fragmentation
+void parseNmeaField(std::string_view line, std::vector<std::string_view>& fields) {
     fields.clear();
-    std::string cur;
-    for (char c : line) {
-        if (c == ',' || c == '*') {
-            fields.push_back(cur);
-            cur.clear();
-        } else {
-            cur.push_back(c);
+    std::size_t start = 0;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        if (line[i] == ',' || line[i] == '*') {
+            fields.push_back(line.substr(start, i - start));
+            start = i + 1;
         }
     }
-    fields.push_back(cur);
+    fields.push_back(line.substr(start));
 }
 
 void pollGps(uint32_t nowMs) {
@@ -325,23 +327,30 @@ void pollGps(uint32_t nowMs) {
         if (c == '\n' || c == '\r') {
             if (gGpsNmeaLine.rfind("$GNRMC", 0) == 0 || gGpsNmeaLine.rfind("$GPRMC", 0) == 0) {
                 // Example: $GNRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
-                std::vector<std::string> f;
+                std::vector<std::string_view> f;
+                f.reserve(16);
                 parseNmeaField(gGpsNmeaLine, f);
                 if (f.size() >= 7 && f[2] == "A") { // Status 'A' = Valid fix
                     gGps.hasFix = true;
                     gGps.lastSentenceMs = nowMs;
                     if (f[1].size() >= 6) {
                         snprintf(gGps.utcTime, sizeof(gGps.utcTime), "%.2s:%.2s:%.2s",
-                                 f[1].c_str(), f[1].c_str() + 2, f[1].c_str() + 4);
+                                 f[1].data(), f[1].data() + 2, f[1].data() + 4);
                     }
                     if (!f[3].empty() && !f[5].empty()) {
-                        const float rawLat = std::strtof(f[3].c_str(), nullptr);
+                        char latBuf[16] = {0};
+                        const std::size_t latLen = std::min(f[3].size(), sizeof(latBuf) - 1);
+                        std::memcpy(latBuf, f[3].data(), latLen);
+                        const float rawLat = std::strtof(latBuf, nullptr);
                         const float latDeg = std::floor(rawLat / 100.0f);
                         float lat = latDeg + ((rawLat - (latDeg * 100.0f)) / 60.0f);
                         if (f[4] == "S") lat = -lat;
                         gGps.latitude = lat;
 
-                        const float rawLon = std::strtof(f[5].c_str(), nullptr);
+                        char lonBuf[16] = {0};
+                        const std::size_t lonLen = std::min(f[5].size(), sizeof(lonBuf) - 1);
+                        std::memcpy(lonBuf, f[5].data(), lonLen);
+                        const float rawLon = std::strtof(lonBuf, nullptr);
                         const float lonDeg = std::floor(rawLon / 100.0f);
                         float lon = lonDeg + ((rawLon - (lonDeg * 100.0f)) / 60.0f);
                         if (f[6] == "W") lon = -lon;
@@ -349,10 +358,14 @@ void pollGps(uint32_t nowMs) {
                     }
                 }
             } else if (gGpsNmeaLine.rfind("$GNGGA", 0) == 0 || gGpsNmeaLine.rfind("$GPGGA", 0) == 0) {
-                std::vector<std::string> f;
+                std::vector<std::string_view> f;
+                f.reserve(16);
                 parseNmeaField(gGpsNmeaLine, f);
                 if (f.size() >= 8 && !f[7].empty()) {
-                    gGps.satellites = static_cast<uint8_t>(std::atoi(f[7].c_str()));
+                    char satBuf[8] = {0};
+                    const std::size_t satLen = std::min(f[7].size(), sizeof(satBuf) - 1);
+                    std::memcpy(satBuf, f[7].data(), satLen);
+                    gGps.satellites = static_cast<uint8_t>(std::atoi(satBuf));
                 }
             }
             gGpsNmeaLine.clear();

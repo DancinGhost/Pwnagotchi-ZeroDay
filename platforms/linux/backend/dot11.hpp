@@ -84,7 +84,11 @@ inline sec::Encryption encryptionFromRsn(const uint8_t* ie, std::size_t len) {
         return sec::Encryption::Wpa2;
     }
     const uint16_t pairwiseCount = static_cast<uint16_t>(ie[off] | (ie[off + 1] << 8));
-    off += 2 + static_cast<std::size_t>(pairwiseCount) * 4u;
+    off += 2;
+    if (static_cast<std::size_t>(pairwiseCount) > (len - off) / 4u) {
+        return sec::Encryption::Wpa2;
+    }
+    off += static_cast<std::size_t>(pairwiseCount) * 4u;
     if (off + 2 > len) {
         return sec::Encryption::Wpa2;
     }
@@ -149,8 +153,14 @@ inline void parseTaggedParams(const uint8_t* tags, std::size_t tlen, bool privac
 
 // True if a data frame carries an EAPOL (0x888E) payload after the MAC+LLC/SNAP headers.
 inline bool looksLikeEapol(const uint8_t* f, std::size_t len) {
+    if (len < 24) {
+        return false;
+    }
+    const uint8_t fc1 = f[1];
+    const bool toDs = (fc1 & 0x01) != 0;
+    const bool fromDs = (fc1 & 0x02) != 0;
     const uint8_t subtype = static_cast<uint8_t>((f[0] >> 4) & 0xF);
-    std::size_t hdr = 24;
+    std::size_t hdr = (toDs && fromDs) ? 30 : 24;
     if ((subtype & 0x08) != 0) {  // QoS data: +2 byte QoS control
         hdr += 2;
     }
