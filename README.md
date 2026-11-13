@@ -42,6 +42,7 @@ render/include/zd/render/     # Hardware-agnostic immediate-mode renderer
   └── surface_rgb565.hpp      # Zero-dep RGB565 framebuffer + 5x7 font + 1-bit export
 platforms/                    # Device & OS shells
   ├── m5stick/main.cpp        # ESP32 + M5Unified + WiFi + NVS Preferences + Serial CLI
+  ├── tdeck/main.cpp          # ESP32-S3 + LovyanGFX + Trackball + Touch + Keyboard + GPS
   ├── native/main.cpp         # Desktop / Linux / RPi CLI simulator & PPM exporter (zd_sim)
   ├── linux/                  # Linux desktop app: real offensive/defensive WiFi tooling
   │   ├── backend/            #   hybrid libpcap/libnl + CLI-tool adapters & pure parsers
@@ -57,13 +58,35 @@ docs/                         # Theme design rules (THEMES.md) & porting guide (
 
 ## Controls
 
+### M5Stack / M5Stick Handhelds
 | Input | Action |
 | :--- | :--- |
 | **Button A (Front `M5`)** / `A` | Cycle screen views (`Pet Face` -> `WiFi Radar` -> `Channel Spectrum`) & wake pet |
 | **Button B (Short press)** / `B` | Trigger an immediate WiFi scan |
 | **Button B (Hold ~0.7s)** / `T` | Cycle to **next** theme (shows toast & persists to flash/storage) |
 | **Power Click or Button C** / `Shift+T` | Cycle to **previous** theme |
-| **Serial / Native / Web CLI** | `themes`, `theme [next\|prev\|<key>]`, `view [next\|prev]`, `scan`, `ascii`, `status` |
+
+### LILYGO T-Deck / T-Deck Plus Portable Cyberdecks
+| Input | Action |
+| :--- | :--- |
+| **Trackball Click (GPIO 0)** / `Space` | Cycle screen views (`Pet Face` -> `WiFi Radar` -> `Channel Spectrum`) & wake pet |
+| **Trackball Hold (~0.6s)** / `Enter` | Trigger an immediate WiFi scan |
+| **Trackball Up / Down** | Cycle screen views backward / forward |
+| **Trackball Left / Right** | Cycle themes backward / forward (shows toast & persists to NVS) |
+| **GT911 Touchscreen** (T-Deck Plus) | Tap top bar to cycle theme; tap left/right third to cycle views; tap center to scan/wake |
+| **QWERTY Keyboard Hotkeys** | `Space`/`Tab`: cycle views; `Enter`: immediate scan; `1`/`2`/`3`: jump to Face/Radar/Spectrum |
+| **Keyboard / Serial CLI** | Interactive typing: `theme neon`, `theme prev`, `themes`, `view next`, `scan`, `status`, `gps` |
+| **MIA-M10Q GPS** (T-Deck Plus) | Real-time GNSS coordinate & satellite acquisition; queried via `gps` command or telemetry |
+
+---
+
+## Quick Flashing Prebuilt Binaries (Nightly Releases)
+
+Precompiled firmware and desktop binaries are built automatically on every commit and available on the **[Releases Tab](https://github.com/DancinGhost/pwnagotchi-zeroday/releases)** under `nightly`.
+
+- **In-Browser Web Flasher (Zero Software Installation)**: Open [Espressif Web Flasher](https://espressif.github.io/esptool-js/) in Chrome/Edge, connect your board, set offset to `0x0`, and flash `pwnagotchi-zd-*-factory.bin`.
+- **One-Click Local Flasher**: Download the release zip for your board and run `./flash.sh` (Linux/macOS) or `flash.bat` (Windows).
+- See [docs/FLASHING.md](docs/FLASHING.md) for step-by-step instructions across all devices.
 
 ---
 
@@ -72,6 +95,12 @@ docs/                         # Theme design rules (THEMES.md) & porting guide (
 ### 1. Embedded Firmware (PlatformIO)
 
 ```bash
+# LILYGO T-Deck Plus / Portable Plus (ESP32-S3, 320x240 ST7789, Touch, Keyboard, GPS)
+pio run -e t-deck-plus --target upload
+
+# Standard LILYGO T-Deck
+pio run -e t-deck --target upload
+
 # M5StickC (160x80) / M5StickC Plus (240x135)
 pio run -e m5stick-c --target upload
 
@@ -81,7 +110,7 @@ pio run -e m5stick-c-plus2 --target upload
 # M5Stack Core2 (320x240 QVGA)
 pio run -e m5stack-core2 --target upload
 
-# Serial monitor + interactive CLI (try typing: themes, theme neon, theme operator)
+# Serial monitor + interactive CLI (try typing: themes, theme neon, gps, status)
 pio device monitor -b 115200
 ```
 
@@ -146,3 +175,18 @@ node platforms/web/test_web_core.js
 ---
 
 See [ROADMAP.md](ROADMAP.md) for planned features across every platform.
+
+---
+
+## License & Legal
+
+- Source code: [MIT License](LICENSE). Third-party components linked into the release binaries
+  (Arduino-ESP32 / LGPL-2.1, ESP-IDF / Apache-2.0, M5Unified, M5GFX, LovyanGFX, Qt 6 / LGPL-3.0,
+  libpcap, ncurses) are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- This is an independent project **inspired by** [Pwnagotchi](https://github.com/evilsocket/pwnagotchi)
+  and is not affiliated with or endorsed by it. All other product names and trademarks belong to
+  their respective owners.
+- **Authorized use only.** Capturing, disrupting (deauthenticating), or analyzing traffic on WiFi
+  networks you do not own or lack written permission to test is illegal in most jurisdictions.
+  You are solely responsible for complying with applicable laws; the software is provided "AS IS"
+  without warranty, as stated in the license.

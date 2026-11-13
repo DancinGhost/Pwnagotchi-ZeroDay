@@ -8,6 +8,8 @@
 # Local host test binaries
 build/
 build_cmake/
+dist/
+dist_release/
 test_runner
 *.o
 *.out
@@ -16,3 +18,7 @@ test_runner
 .DS_Store
 Thumbs.db
 *~
+
+# Python bytecode
+__pycache__/
+*.pyc

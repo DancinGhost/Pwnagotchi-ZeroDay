@@ -21,6 +21,7 @@ pwnagotchi-zeroday/
 │   └── surface_rgb565.hpp        # Zero-dep software RGB565 surface + 5x7 font + 1-bit export
 ├── platforms/                    # Layer 3: Imperative Hardware & OS Shells
 │   ├── m5stick/main.cpp          # ESP32 + M5Unified + WiFi + NVS Preferences + Serial CLI
+│   ├── tdeck/main.cpp            # ESP32-S3 + LovyanGFX + Trackball + Touch + Keyboard + GPS
 │   ├── native/main.cpp           # Linux / macOS / Windows / RPi terminal simulator & PPM exporter
 │   └── web/                      # Standalone HTML5 Canvas + JS functional core port
 └── tests/                        # Automated Host & Cross-Language Parity Tests

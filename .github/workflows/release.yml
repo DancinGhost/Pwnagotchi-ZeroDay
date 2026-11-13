@@ -1,0 +1,240 @@
+name: Build & Publish Nightly Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'  # 2:00 AM UTC daily
+
+permissions:
+  contents: write
+
+jobs:
+  # --------------------------------------------------------------------------------------
+  # Job 1: Build Embedded Firmwares (ESP32 / ESP32-S3 via PlatformIO)
+  # --------------------------------------------------------------------------------------
+  build-firmware:
+    name: Build Firmware (${{ matrix.target.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - env: m5stick-c
+            name: M5StickC / M5StickC Plus
+            chip: esp32
+            boot_offset: '0x1000'
+          - env: m5stick-c-plus2
+            name: M5StickC Plus2
+            chip: esp32
+            boot_offset: '0x1000'
+          - env: m5stack-core2
+            name: M5Stack Core2
+            chip: esp32
+            boot_offset: '0x1000'
+          - env: t-deck-plus
+            name: LILYGO T-Deck Plus
+            chip: esp32s3
+            boot_offset: '0x0'
+          - env: t-deck
+            name: LILYGO T-Deck
+            chip: esp32s3
+            boot_offset: '0x0'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install PlatformIO & esptool
+        run: |
+          pip install --upgrade platformio esptool
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ matrix.target.env }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            pio-${{ runner.os }}-${{ matrix.target.env }}-
+            pio-${{ runner.os }}-
+
+      - name: Build firmware for ${{ matrix.target.env }}
+        run: |
+          pio run -e ${{ matrix.target.env }}
+
+      - name: Generate merged factory binary and package zip
+        run: |
+          ENV_DIR=".pio/build/${{ matrix.target.env }}"
+          DIST_DIR="dist/${{ matrix.target.env }}"
+          mkdir -p "$DIST_DIR"
+
+          # Copy core raw binaries
+          cp "$ENV_DIR/firmware.bin" "$DIST_DIR/firmware.bin"
+          cp "$ENV_DIR/bootloader.bin" "$DIST_DIR/bootloader.bin"
+          cp "$ENV_DIR/partitions.bin" "$DIST_DIR/partitions.bin"
+
+          # Find boot_app0.bin if available
+          BOOT_APP0=$(find ~/.platformio/packages -name "boot_app0.bin" 2>/dev/null | head -n 1)
+          EXTRA_BOOT=""
+          if [ -n "$BOOT_APP0" ]; then
+            EXTRA_BOOT="0xe000 $BOOT_APP0"
+          fi
+
+          # Merge binaries into a single, unified factory flash image (start address 0x0)
+          FACTORY_BIN="$DIST_DIR/pwnagotchi-zd-${{ matrix.target.env }}-factory.bin"
+          esptool.py --chip ${{ matrix.target.chip }} merge_bin \
+            -o "$FACTORY_BIN" \
+            ${{ matrix.target.boot_offset }} "$ENV_DIR/bootloader.bin" \
+            0x8000 "$ENV_DIR/partitions.bin" \
+            $EXTRA_BOOT \
+            0x10000 "$ENV_DIR/firmware.bin"
+
+          # Include cross-platform one-click flashing utilities
+          if [ -d "scripts/flasher" ]; then
+            cp scripts/flasher/* "$DIST_DIR/"
+          fi
+          if [ -f "docs/FLASHING.md" ]; then
+            cp docs/FLASHING.md "$DIST_DIR/"
+          fi
+          # License compliance: ship our license + third-party notices with the binaries
+          cp LICENSE THIRD_PARTY_NOTICES.md "$DIST_DIR/"
+
+          # Create zip archive
+          ZIP_NAME="pwnagotchi-zd-${{ matrix.target.env }}.zip"
+          cd "$DIST_DIR"
+          zip -r "../../$ZIP_NAME" ./*
+          cd ../..
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target.env }}
+          path: pwnagotchi-zd-${{ matrix.target.env }}.zip
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------------------
+  # Job 2: Build Linux Desktop & CLI Binaries (x86_64)
+  # --------------------------------------------------------------------------------------
+  build-linux:
+    name: Build Linux Desktop (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libpcap-dev libncurses-dev qt6-base-dev
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compile Linux targets
+        run: |
+          cmake --build build --config Release -j$(nproc)
+
+      - name: Run automated test suite
+        run: |
+          ctest --test-dir build --output-on-failure
+
+      - name: Package Linux binaries
+        run: |
+          DIST_DIR="dist/linux-x86_64"
+          mkdir -p "$DIST_DIR/bin"
+          cp build/zd-linux "$DIST_DIR/bin/"
+          cp build/zd-gui "$DIST_DIR/bin/" 2>/dev/null || true
+          cp build/zd_sim "$DIST_DIR/bin/"
+          cp README.md "$DIST_DIR/"
+          cp LICENSE "$DIST_DIR/"
+          cp THIRD_PARTY_NOTICES.md "$DIST_DIR/"
+          cp docs/LINUX.md "$DIST_DIR/" 2>/dev/null || true
+
+          TAR_NAME="pwnagotchi-zd-linux-x86_64.tar.gz"
+          tar -czvf "$TAR_NAME" -C dist/linux-x86_64 .
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: pwnagotchi-zd-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------------------
+  # Job 3: Package Web Pocket Cyberdeck
+  # --------------------------------------------------------------------------------------
+  build-web:
+    name: Package Web Cyberdeck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package Web build
+        run: |
+          ZIP_NAME="pwnagotchi-zd-web.zip"
+          cd platforms/web
+          zip -r "../../$ZIP_NAME" index.html styles.css js/
+          cd ../..
+          zip -j "$ZIP_NAME" LICENSE THIRD_PARTY_NOTICES.md
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-cyberdeck
+          path: pwnagotchi-zd-web.zip
+          if-no-files-found: error
+
+  # --------------------------------------------------------------------------------------
+  # Job 4: Collate Artifacts, Checksum, and Publish Nightly Release
+  # --------------------------------------------------------------------------------------
+  publish-nightly:
+    name: Publish Nightly Release
+    needs: [build-firmware, build-linux, build-web]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or Update Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "pwnagotchi-zeroday Nightly Release"
+          body: |
+            Automated multi-platform nightly build of **pwnagotchi-zeroday** from branch `main`.
+
+            ### Included Artifacts
+            - **LILYGO T-Deck Plus**: `pwnagotchi-zd-t-deck-plus.zip` (ESP32-S3, 320x240 ST7789, Touch, Keyboard, GPS)
+            - **LILYGO T-Deck**: `pwnagotchi-zd-t-deck.zip` (Standard T-Deck)
+            - **M5StickC / M5StickC Plus**: `pwnagotchi-zd-m5stick-c.zip`
+            - **M5StickC Plus2**: `pwnagotchi-zd-m5stick-c-plus2.zip`
+            - **M5Stack Core2**: `pwnagotchi-zd-m5stack-core2.zip`
+            - **Linux x86_64 Desktop & TUI**: `pwnagotchi-zd-linux-x86_64.tar.gz` (`zd-linux`, `zd-gui`, `zd_sim`)
+            - **Web Pocket Cyberdeck**: `pwnagotchi-zd-web.zip` (HTML5 Canvas simulator)
+
+            ### How to Flash Embedded Devices
+            - **In-Browser Web Flasher**: Connect your board to Chrome/Edge and open [Espressif Web Flasher](https://espressif.github.io/esptool-js/), choose baud rate `921600`, select offset `0x0000`, and flash `pwnagotchi-zd-*-factory.bin`!
+            - **One-Click Script**: Extract the board's zip and run `./flash.sh` (Linux/macOS) or `flash.bat` (Windows).
+            - For detailed instructions, see [FLASHING.md](https://github.com/DancinGhost/pwnagotchi-zeroday/blob/main/docs/FLASHING.md).
+          files: release-assets/*
+          prerelease: true
+          draft: false

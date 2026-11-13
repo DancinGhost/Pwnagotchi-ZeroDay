@@ -162,6 +162,20 @@ void testResponsiveUiModels() {
         assert(line.size() <= 14u);
     }
 
+    // Wide LILYGO T-Deck / T-Deck Plus resolution (320x240)
+    const zd::UiFrame tdeckFrame = zd::buildUiFrame(state, {320, 240});
+    assert(!tdeckFrame.compact);
+    assert(tdeckFrame.dims.width == 320 && tdeckFrame.dims.height == 240);
+    assert(tdeckFrame.headerLine.size() <= 53u);
+    assert(tdeckFrame.footerLine.size() <= 53u);
+    for (const auto& line : tdeckFrame.phraseLines) {
+        assert(line.size() <= 28u);
+    }
+    assert(tdeckFrame.radarRows.size() <= 12u);
+
+    std::cout << "=== LILYGO T-Deck / T-Deck Plus (320x240) Face View Preview ===\n"
+              << zd::renderAsciiPreview(tdeckFrame) << "\n";
+
     std::cout << "=== M5StickC Plus/Plus2 (240x135) Face View Preview ===\n"
               << zd::renderAsciiPreview(plusFrame) << "\n";
 

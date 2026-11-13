@@ -15,7 +15,7 @@ else
     HAVE_PCAP := 1
 endif
 
-.PHONY: all test sim demo linux web-serve clean
+.PHONY: all test sim demo linux web-serve clean dist
 
 all: $(BUILD)/test_functional_core $(BUILD)/test_painter $(BUILD)/test_secops \
      $(BUILD)/test_linux_parsers $(BUILD)/zd_sim
@@ -63,4 +63,8 @@ web-serve:
 	python3 -m http.server 8080 --directory platforms/web
 
 clean:
-	rm -rf $(BUILD) build_cmake
+	rm -rf $(BUILD) build_cmake dist dist_release
+
+dist:
+	./scripts/package_release.sh
+
