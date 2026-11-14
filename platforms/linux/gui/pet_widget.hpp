@@ -8,12 +8,15 @@
 #include <cstring>
 #include <vector>
 
+#include <QColor>
 #include <QImage>
 #include <QPainter>
+#include <QPen>
 #include <QWidget>
 
 #include "zd/render/painter.hpp"
 #include "zd/render/surface_rgb565.hpp"
+#include "zd/secops.hpp"
 #include "zd/ui_model.hpp"
 
 namespace zd {
@@ -40,6 +43,13 @@ public:
         update();
     }
 
+    void setSecMood(sec::SecMood mood) {
+        if (secMood_ != mood) {
+            secMood_ = mood;
+            update();
+        }
+    }
+
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
@@ -52,10 +62,20 @@ protected:
         const QRect dst(QPoint((width() - target.width()) / 2, (height() - target.height()) / 2),
                         target);
         p.drawImage(dst, image_);
+
+        // Ambient threat-level bezel shift driven by SecMood (Watchful = amber, Alarmed = red).
+        if (secMood_ != sec::SecMood::Calm) {
+            const QColor bezel = (secMood_ == sec::SecMood::Alarmed)
+                                     ? QColor(220, 30, 30)
+                                     : QColor(230, 160, 0);
+            p.setPen(QPen(bezel, 3));
+            p.drawRect(rect().adjusted(1, 1, -2, -2));
+        }
     }
 
 private:
     QImage image_;
+    sec::SecMood secMood_ = sec::SecMood::Calm;
 };
 
 }  // namespace linux_gui

@@ -38,6 +38,11 @@ void testMacNormalization() {
     assert(normalizeMac("AA-BB-CC-DD-EE-FF") == "aa:bb:cc:dd:ee:ff");
     assert(normalizeMac("  aa:bb:cc:dd:ee:ff ") == "aa:bb:cc:dd:ee:ff");
     assert(isBroadcastMac(normalizeMac("ff:ff:ff:ff:ff:ff")));
+    assert(isMulticastMac("ff:ff:ff:ff:ff:ff"));
+    assert(isMulticastMac("01:00:5e:00:00:fb"));   // IPv4 mDNS multicast
+    assert(isMulticastMac("33:33:00:00:00:01"));   // IPv6 all-nodes multicast
+    assert(!isMulticastMac("00:11:22:33:44:55"));  // unicast
+    assert(!isMulticastMac("02:11:22:33:44:55"));  // locally-administered unicast
 }
 
 void testMacValidation() {
@@ -50,6 +55,21 @@ void testMacValidation() {
     assert(!isValidMac("--i-am-authorized"));       // a stray CLI flag, not a MAC
     assert(!isValidMac("aa:bb:cc:dd:ee"));           // too short (10 hex digits)
     assert(!isValidMac("aa:bb:cc:dd:ee:ff:00"));     // too long (14 hex digits)
+
+    // Interface name validation (CWE-88 guard)
+    assert(isValidIfaceName("wlan0"));
+    assert(isValidIfaceName("wlan0mon"));
+    assert(isValidIfaceName("wlx00c0ca123456"));
+    assert(!isValidIfaceName(""));
+    assert(!isValidIfaceName("-w"));
+    assert(!isValidIfaceName("--help"));
+    assert(!isValidIfaceName(".hidden"));
+    assert(!isValidIfaceName("wlan0;rm -rf /"));
+    assert(!isValidIfaceName("interface_name_way_too_long_for_linux"));
+
+    // Out-of-range enum values in decodeSecEvent must be rejected
+    assert(!decodeSecEvent("AP|100|aa:bb:cc:00:00:01|Test|6|-40|99|0").has_value());
+    assert(!decodeSecEvent("INJECT|100|aa:bb:cc:00:00:01||5|99").has_value());
 }
 
 void testChannelBands() {
@@ -193,10 +213,23 @@ void testStationProbeTracking() {
     assert(findStation(s, "ff:ff:ff:ff:ff:ff") == nullptr);
 
     // Association (ClientObserved) upserts the same station record and sets lastBssid.
+    s = reduce(s, ApObserved{1350u, "aa:bb:cc:00:00:01", "HomeNet", 6, -40, Encryption::Wpa2});
     s = reduce(s, ClientObserved{1400u, "aa:bb:cc:00:00:01", client});
     st = findStation(s, client);
     assert(st->lastBssid == "aa:bb:cc:00:00:01");
     assert(st->probedSsids.size() == 2u);  // untouched by association
+    assert(findTarget(s, "aa:bb:cc:00:00:01")->clientCount == 1u);
+
+    // Repeated data frames from the same associated station must not inflate clientCount.
+    s = reduce(s, ClientObserved{1450u, "aa:bb:cc:00:00:01", client});
+    assert(findTarget(s, "aa:bb:cc:00:00:01")->clientCount == 1u);
+
+    // Broadcast/AP-self addresses must not create phantom stations or inflate clientCount.
+    s = reduce(s, ClientObserved{1460u, "aa:bb:cc:00:00:01", "ff:ff:ff:ff:ff:ff"});
+    s = reduce(s, ClientObserved{1470u, "aa:bb:cc:00:00:01", "aa:bb:cc:00:00:01"});
+    assert(findTarget(s, "aa:bb:cc:00:00:01")->clientCount == 1u);
+    assert(findStation(s, "ff:ff:ff:ff:ff:ff") == nullptr);
+    assert(findStation(s, "aa:bb:cc:00:00:01") == nullptr);
 
     // stationsByActivity sorts most-active first.
     s = reduce(s, ProbeRequestObserved{1500u, "77:88:99:aa:bb:cc", "Solo"});
@@ -362,6 +395,76 @@ void testSessionIngest() {
     assert(t != nullptr && t->ssid == "Lab" && t->handshake);
 }
 
+void testAlertRingCapCounter() {
+    SecState s;
+    for (std::size_t i = 0; i < kMaxAlerts + 25u; ++i) {
+        s = reduce(s, InjectionAttempt{static_cast<uint32_t>(1000u + i), "aa:bb:cc:00:00:01",
+                                       "", 1u, AuthDecision::BlockedUnconfirmed});
+    }
+    assert(s.alerts.size() == kMaxAlerts);
+    assert(s.totalAlertsEmitted == kMaxAlerts + 25u);
+}
+
+void testCollectionRingCapsAndWeakProbes() {
+    SecState s;
+    // Populate kMaxTargets + 10 distinct BSSIDs; oldest timestamp (bssid index 0) must be evicted.
+    for (std::size_t i = 0; i < kMaxTargets + 10u; ++i) {
+        char mac[24];
+        std::snprintf(mac, sizeof(mac), "02:00:00:00:%02x:%02x",
+                      static_cast<unsigned>((i >> 8) & 0xFFu),
+                      static_cast<unsigned>(i & 0xFFu));
+        s = reduce(s, ApObserved{static_cast<uint32_t>(100u + i), mac,
+                                 "SSID_" + std::to_string(i), 6, -50, Encryption::Wpa2});
+    }
+    assert(s.targets.size() == kMaxTargets);
+    assert(findTarget(s, "02:00:00:00:00:00") == nullptr);
+    assert(findTarget(s, "02:00:00:00:00:0a") != nullptr);
+    assert(s.bssidSsids.size() <= kMaxBssidSsids);
+
+    // Weak/default probe pattern detection.
+    Station cleanSt;
+    cleanSt.mac = "02:11:22:33:44:55";
+    cleanSt.probedSsids = {"CorpVpn_5G", "ZeroDayLab"};
+    assert(!hasWeakOrDefaultProbe(cleanSt));
+
+    Station weakSt = cleanSt;
+    weakSt.probedSsids.push_back("Airport_FreeWiFi");
+    assert(hasWeakOrDefaultProbe(weakSt));
+
+    // SecSession live recorder & loadEvents replay.
+    struct SpyRecorder : public ISessionRecorder {
+        std::vector<std::string> lines;
+        void recordEvent(const std::string& line) override { lines.push_back(line); }
+    } rec;
+    SecSession sess;
+    sess.setRecorder(&rec);
+    sess.ingest(CapturedFrame{50u, FrameKind::Beacon, "02:aa:bb:cc:dd:ee", "", "",
+                              "TestLab", 11, -48, Encryption::Wpa3, true});
+    assert(rec.lines.size() == 1u);
+    assert(sess.events().size() == 1u);
+
+    SecSession replayed;
+    replayed.loadEvents(decodeSecEvents(rec.lines));
+    const WifiTarget* rt = findTarget(replayed.state(), "02:aa:bb:cc:dd:ee");
+    assert(rt != nullptr && rt->ssid == "TestLab" && rt->wps && rt->enc == Encryption::Wpa3);
+}
+
+void testStationZeroTimestampAndClockSkew() {
+    SecState s;
+    const std::string client = "11:22:33:44:55:66";
+    s = reduce(s, ProbeRequestObserved{0u, client, "Home"});
+    s = reduce(s, ProbeRequestObserved{5000u, client, "Work"});
+    const Station* st = findStation(s, client);
+    assert(st != nullptr);
+    assert(st->firstSeenMs == 0u);
+    assert(st->lastSeenMs == 5000u);
+
+    // Out-of-order timestamps must not underflow unsigned window subtraction.
+    s = reduce(s, ApObserved{2000u, "aa:bb:cc:00:00:01", "Lab", 6, -40, Encryption::Wpa2});
+    s = reduce(s, ApObserved{2100u, "aa:bb:cc:00:00:02", "Lab", 6, -45, Encryption::Open});
+    assert(deriveSecMood(s, 1500u) == SecMood::Alarmed);
+}
+
 }  // namespace
 
 int main() {
@@ -383,6 +486,9 @@ int main() {
     testSessionDeauthGate();
     testBeginDeauthMatchesRequestDeauth();
     testSessionIngest();
+    testAlertRingCapCounter();
+    testCollectionRingCapsAndWeakProbes();
+    testStationZeroTimestampAndClockSkew();
     std::cout << "[secops] all security-engine tests passed\n";
     return 0;
 }

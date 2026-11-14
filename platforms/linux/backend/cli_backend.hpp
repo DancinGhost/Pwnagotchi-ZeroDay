@@ -24,10 +24,12 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <pwd.h>
 #include <unistd.h>
 
 #include "zd/hal.hpp"
@@ -52,7 +54,15 @@ inline std::string readFileToString(const std::string& path) {
 
 inline std::string homeDir() {
     const char* h = std::getenv("HOME");
-    return (h != nullptr) ? std::string(h) : std::string("/tmp");
+    if (h != nullptr && *h != '\0') {
+        return std::string(h);
+    }
+    if (struct passwd* pw = ::getpwuid(::getuid())) {
+        if (pw->pw_dir != nullptr && *pw->pw_dir != '\0') {
+            return std::string(pw->pw_dir);
+        }
+    }
+    return "/root";
 }
 
 // Create `dir` and any missing parents (POSIX `mkdir -p`, without spawning a subprocess).
@@ -81,15 +91,34 @@ public:
     // NOTE: `airmon-ng check kill` stops NetworkManager/wpa_supplicant and will drop your
     // managed WiFi connection — standard for monitor mode, but expect to go offline.
     static std::string bringUpMonitor(const std::string& iface) {
+        if (!sec::isValidIfaceName(iface)) {
+            return {};
+        }
+        // Try non-destructive `iw` monitor mode switch first before falling back to airmon-ng.
+        runCapture({"ip", "link", "set", iface, "down"});
+        if (runCapture({"iw", "dev", iface, "set", "type", "monitor"}).exitCode == 0 &&
+            runCapture({"ip", "link", "set", iface, "up"}).exitCode == 0) {
+            const std::string mon = findMonitorInterface(iface);
+            if (!mon.empty()) {
+                return mon;
+            }
+        }
         runCapture({"airmon-ng", "check", "kill"});
-        runCapture({"airmon-ng", "start", iface});
+        runCapture({"airmon-ng", "start", "--", iface});
         return findMonitorInterface(iface);  // "" if no monitor interface resulted
     }
 
     // Slow: tears down monitor mode on `monitorIface`. Touches no object state; the
     // caller commits the result via applyDown().
     static void takeDownMonitor(const std::string& monitorIface) {
-        runCapture({"airmon-ng", "stop", monitorIface});
+        if (!sec::isValidIfaceName(monitorIface)) {
+            return;
+        }
+        runCapture({"airmon-ng", "stop", "--", monitorIface});
+        runCapture({"ip", "link", "set", monitorIface, "down"});
+        runCapture({"iw", "dev", monitorIface, "set", "type", "managed"});
+        runCapture({"ip", "link", "set", monitorIface, "up"});
+        runCapture({"systemctl", "start", "NetworkManager"});
     }
 
     // Fast, UI-thread-only state commit from a bringUpMonitor()/takeDownMonitor() result.
@@ -126,7 +155,7 @@ public:
     }
 
     bool setChannel(int channel) override {
-        if (!isMonitor_ || channel <= 0) {
+        if (!isMonitor_ || channel <= 0 || !sec::isValidIfaceName(monitorIface_)) {
             return false;
         }
         const CommandResult r =
@@ -193,6 +222,13 @@ public:
         if (running_) {
             return true;
         }
+        if (!sec::isValidIfaceName(monitorIface)) {
+            return false;
+        }
+        seenApBeacons_.clear();
+        seenStations_.clear();
+        seenProbes_.clear();
+        lastPollMs_ = 0u;
         // Create an isolated private temporary directory (mode 0700) to prevent symlink/TOCTOU
         // attacks and protect sniffed wireless telemetry on multi-user systems.
         char templ[] = "/tmp/zd-airodump-XXXXXX";
@@ -204,7 +240,7 @@ public:
         prefix_ = tempDir_ + "/capture";
         csvPath_ = prefix_ + "-01.csv";
         const bool ok = proc_.start({"airodump-ng", "--output-format", "csv", "--write-interval",
-                                     "1", "-w", prefix_, monitorIface});
+                                     "1", "-w", prefix_, "--", monitorIface});
         running_ = ok;
         if (!ok) {
             cleanTempDir();
@@ -217,13 +253,22 @@ public:
         if (!running_) {
             return frames;
         }
+        const uint32_t now = linux_app::nowMs();
+        if (lastPollMs_ != 0u && (now - lastPollMs_) < 950u) {
+            return frames;
+        }
+        lastPollMs_ = now;
         const std::string csv = readFileToString(csvPath_);
         if (csv.empty()) {
             return frames;
         }
         const AirodumpDump dump = parseAirodumpCsv(csv);
-        const uint32_t now = linux_app::nowMs();
         for (const AirodumpAp& ap : dump.aps) {
+            auto it = seenApBeacons_.find(ap.bssid);
+            if (it != seenApBeacons_.end() && it->second == ap.beacons) {
+                continue;
+            }
+            seenApBeacons_[ap.bssid] = ap.beacons;
             sec::CapturedFrame f;
             f.nowMs = now;
             f.kind = sec::FrameKind::Beacon;
@@ -232,23 +277,31 @@ public:
             f.channel = ap.channel;
             f.rssi = ap.rssi;
             f.enc = ap.enc;
-            frames.push_back(f);  // reduce() de-dupes by BSSID; re-emission just refreshes
+            frames.push_back(f);
         }
         for (const AirodumpStation& st : dump.stations) {
-            if (st.bssid.empty() || sec::isBroadcastMac(st.bssid)) {
-                continue;
+            if (!st.bssid.empty() && !sec::isMulticastMac(st.bssid)) {
+                const std::string key = st.mac + "@" + st.bssid;
+                if (seenStations_.insert(key).second) {
+                    sec::CapturedFrame f;
+                    f.nowMs = now;
+                    f.kind = sec::FrameKind::Data;
+                    f.bssid = st.bssid;
+                    f.source = st.mac;
+                    frames.push_back(f);
+                }
             }
-            const std::string key = st.mac + "@" + st.bssid;
-            if (seenStations_.count(key) != 0u) {
-                continue;
+            for (const std::string& probed : st.probedEssids) {
+                const std::string pkey = st.mac + "?" + probed;
+                if (seenProbes_.insert(pkey).second) {
+                    sec::CapturedFrame pf;
+                    pf.nowMs = now;
+                    pf.kind = sec::FrameKind::ProbeRequest;
+                    pf.source = st.mac;
+                    pf.ssid = probed;
+                    frames.push_back(pf);
+                }
             }
-            seenStations_.insert(key);
-            sec::CapturedFrame f;
-            f.nowMs = now;
-            f.kind = sec::FrameKind::Data;
-            f.bssid = st.bssid;
-            f.source = st.mac;
-            frames.push_back(f);
         }
         return frames;
     }
@@ -282,7 +335,10 @@ private:
     std::string tempDir_;
     std::string prefix_;
     std::string csvPath_;
+    std::unordered_map<std::string, uint32_t> seenApBeacons_;
     std::set<std::string> seenStations_;
+    std::set<std::string> seenProbes_;
+    uint32_t lastPollMs_ = 0u;
     bool running_ = false;
 };
 
@@ -301,14 +357,24 @@ public:
     const std::vector<ScannedAp>& detailed() const { return detailed_; }
 
     bool startAsyncScan() override {
-        return job_.start([]() {
-            // Runs entirely on the worker thread: kick a rescan, give NetworkManager a
-            // moment to populate fresh results, then fetch them as plain text. Touches
-            // no scanner state - the UI thread parses the text once collect() returns it.
-            runCapture({"nmcli", "dev", "wifi", "rescan"});
-            std::this_thread::sleep_for(std::chrono::milliseconds(1200));
-            const CommandResult r = runCapture(
-                {"nmcli", "-t", "-f", "BSSID,SSID,CHAN,SECURITY,SIGNAL", "dev", "wifi", "list"});
+        const std::string iface = iface_;
+        return job_.start([iface]() {
+            // Runs entirely on the worker thread: fetch Wi-Fi list with `--rescan auto` so
+            // NetworkManager refreshes without an uninterruptible 1.2s sleep on shutdown.
+            const bool validIface = sec::isValidIfaceName(iface);
+            if (validIface) {
+                const CommandResult r = runCapture({
+                    "nmcli", "-t", "-f", "BSSID,SSID,CHAN,SECURITY,SIGNAL",
+                    "dev", "wifi", "list", "--rescan", "auto", "ifname", iface
+                });
+                if (r.exitCode == 0 && !r.stdoutText.empty()) {
+                    return r.stdoutText;
+                }
+            }
+            const CommandResult r = runCapture({
+                "nmcli", "-t", "-f", "BSSID,SSID,CHAN,SECURITY,SIGNAL",
+                "dev", "wifi", "list", "--rescan", "auto"
+            });
             return r.stdoutText;
         });
     }
@@ -322,7 +388,16 @@ public:
             return {zd::hal::ScanPollState::Running, {}};
         }
         detailed_ = parseNmcliScanDetailed(*text);
-        std::vector<AccessPoint> aps = parseNmcliScan(*text);
+        std::vector<AccessPoint> aps;
+        aps.reserve(detailed_.size());
+        for (const ScannedAp& item : detailed_) {
+            AccessPoint ap;
+            ap.ssid = item.ssid;
+            ap.rssi = item.rssi;
+            ap.channel = item.channel;
+            ap.secure = (item.enc != sec::Encryption::Open && item.enc != sec::Encryption::Unknown);
+            aps.push_back(std::move(ap));
+        }
         return {zd::hal::ScanPollState::Completed, std::move(aps)};
     }
 
@@ -353,18 +428,35 @@ public:
             res.detail = "no monitor interface";
             return res;
         }
-        std::vector<std::string> argv = {"aireplay-ng", "--deauth", std::to_string(count), "-a",
-                                         bssid};
-        if (!client.empty() && !sec::isBroadcastMac(client)) {
-            argv.push_back("-c");
-            argv.push_back(client);
+        const std::string monIface = monitor_->monitorIface();
+        if (!sec::isValidIfaceName(monIface)) {
+            res.transmitted = false;
+            res.detail = "invalid monitor interface name";
+            return res;
         }
-        argv.push_back(monitor_->monitorIface());
+        if (!sec::isValidMac(bssid) || (!client.empty() && !sec::isValidMac(client))) {
+            res.transmitted = false;
+            res.detail = "invalid BSSID or client MAC";
+            return res;
+        }
+        const uint32_t safeCount = (count < 1u) ? 1u : ((count > 1000u) ? 1000u : count);
+        const std::string normBssid = sec::normalizeMac(bssid);
+        std::vector<std::string> argv = {"aireplay-ng", "--deauth", std::to_string(safeCount), "-a",
+                                         normBssid};
+        if (!client.empty()) {
+            const std::string normClient = sec::normalizeMac(client);
+            if (!sec::isBroadcastMac(normClient)) {
+                argv.push_back("-c");
+                argv.push_back(normClient);
+            }
+        }
+        argv.push_back("--");
+        argv.push_back(monIface);
         const CommandResult r = runCapture(argv);
         res.transmitted = (r.exitCode == 0);
-        res.detail = res.transmitted ? ("aireplay-ng sent " + std::to_string(count) + " deauth")
-                                     : ("aireplay-ng failed (exit " + std::to_string(r.exitCode) +
-                                        ")");
+        res.detail = res.transmitted
+                         ? ("aireplay-ng sent " + std::to_string(safeCount) + " deauth")
+                         : ("aireplay-ng failed (exit " + std::to_string(r.exitCode) + ")");
         return res;
     }
 
@@ -416,8 +508,8 @@ public:
     }
 
     void saveThemeKey(std::string_view key) override {
-        // Enforce 0600 permissions (read/write only by owner)
-        const int fd = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        // Enforce 0600 permissions (read/write only by owner) and block symlink following
+        const int fd = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd >= 0) {
             ::fchmod(fd, 0600);
             const std::string entry = std::string(key.data(), key.size()) + "\n";
@@ -442,15 +534,17 @@ public:
     }
 
     void record(const std::string& line) override {
-        // Enforce 0600 permissions so audit trail is private and protected from tampering
-        const int fd = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0600);
+        // Enforce 0600 permissions and block symlink following so audit trail is private
+        const int fd = ::open(path_.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd < 0) {
             return;
         }
         ::fchmod(fd, 0600);
         const std::time_t t = std::time(nullptr);
-        char ts[32];
-        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", std::localtime(&t));
+        std::tm tmBuf{};
+        ::localtime_r(&t, &tmBuf);
+        char ts[32] = {0};
+        std::strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", &tmBuf);
         const std::string entry = std::string(ts) + " " + line + "\n";
         const ssize_t written = ::write(fd, entry.data(), entry.size());
         (void)written;
@@ -462,6 +556,82 @@ public:
 private:
     std::string path_;
 };
+
+// --- Live session event recorder (--record <file>) & file I/O helpers ----------------
+
+class FileSessionRecorder final : public sec::ISessionRecorder {
+public:
+    bool open(const std::string& path) {
+        close();
+        fd_ = ::open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd_ < 0) {
+            return false;
+        }
+        ::fchmod(fd_, 0600);
+        path_ = path;
+        return true;
+    }
+
+    void close() {
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+        path_.clear();
+    }
+
+    ~FileSessionRecorder() override { close(); }
+
+    void recordEvent(const std::string& encodedLine) override {
+        if (fd_ < 0 || encodedLine.empty()) {
+            return;
+        }
+        const std::string line = encodedLine + "\n";
+        const ssize_t written = ::write(fd_, line.data(), line.size());
+        (void)written;
+    }
+
+    bool active() const { return fd_ >= 0; }
+    const std::string& path() const { return path_; }
+
+private:
+    int fd_ = -1;
+    std::string path_;
+};
+
+inline bool saveEventsToFile(const std::string& path, const std::vector<sec::SecEvent>& events) {
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        return false;
+    }
+    ::fchmod(fd, 0600);
+    for (const std::string& line : sec::encodeSecEvents(events)) {
+        const std::string entry = line + "\n";
+        const ssize_t written = ::write(fd, entry.data(), entry.size());
+        if (written < 0) {
+            ::close(fd);
+            return false;
+        }
+    }
+    ::close(fd);
+    return true;
+}
+
+inline std::optional<std::vector<sec::SecEvent>> loadEventsFromFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return std::nullopt;
+    }
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        lines.push_back(line);
+    }
+    return sec::decodeSecEvents(lines);
+}
 
 }  // namespace linux_backend
 }  // namespace zd

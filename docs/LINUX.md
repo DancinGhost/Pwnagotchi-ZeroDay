@@ -31,17 +31,22 @@ Pure detectors in [`core/include/zd/secops.hpp`](../core/include/zd/secops.hpp),
 - **Deauthentication injection** to force handshakes — **only** against explicitly
   allow-listed BSSIDs, and only after you confirm authorization. Every decision is logged.
 
-### Other core engine capabilities (not yet surfaced in the TUI/GUI — see [ROADMAP.md](../ROADMAP.md))
+### Additional recon, threat & session capabilities (surfaced in TUI & GUI)
 - **Station / probe-request tracking** — a `Station` record per client MAC (probed SSIDs,
-  last-associated BSSID), fed by probe requests as well as association frames.
-- **WPS flag** on tracked APs (`WifiTarget.wps`) — detection itself is not yet wired into
-  the frame parser.
-- **`SecMood`** — a `Calm`/`Watchful`/`Alarmed` signal purely derived from recent alert
-  severity, for a future GUI/TUI status indicator.
-- **Session record/replay** — a pure, escaped text encoding for the `SecEvent` log
-  (`encodeSecEvents`/`decodeSecEvents`/`replaySecEvents`), so a captured session can be
-  replayed deterministically through `reduce()`. File I/O (`--record`/`--replay` flags) is
-  not yet wired into the CLI.
+  last-associated BSSID, probe count, and a `WEAK` risk flag via `hasWeakOrDefaultProbe()`
+  when probing for common default/open-bait SSIDs). Viewable in the `zd-gui` **Stations / Probes**
+  tab and by pressing `p` (or `Tab`) in the `zd-linux` TUI.
+- **WPS detection (`WPS*`)** — decoded from the WPS vendor IE (`00:50:F2:04`) in monitor-mode
+  beacons/probe-responses (`dot11.hpp`) and surfaced in a dedicated `WPS` column in both
+  `zd-linux` and `zd-gui`.
+- **`SecMood` ambient threat status** — a `CALM` / `WATCHFUL` / `ALARMED` signal purely
+  derived from recent alert severity (`deriveSecMood`), displayed in the `zd-linux` TUI header,
+  `zd-linux watch` alert stream, `zd-gui` status header, and as an amber/crimson bezel border on
+  the `zd-gui` PetWidget.
+- **Session record & deterministic replay** — pure, escaped text encoding for the `SecEvent` log
+  (`encodeSecEvents`/`decodeSecEvents`/`replaySecEvents`), wired into `zd-linux` via
+  `--record <file>`, `--replay <file>`, `zd-linux replay <file>`, and TUI `w`/`r` hotkeys, plus
+  **Load Session…** / **Save Session…** buttons in `zd-gui`.
 
 ---
 
@@ -84,8 +89,8 @@ cores and is unit-tested without hardware or root
 Dependencies (Debian/Kali):
 
 ```bash
-sudo apt install cmake pkg-config qt6-base-dev libpcap-dev libnl-3-dev libnl-genl-3-dev \
-                 libncurses-dev aircrack-ng iw network-manager
+sudo apt install cmake pkg-config qt6-base-dev libpcap-dev libncurses-dev \
+                 aircrack-ng iw network-manager
 ```
 
 Build both front-ends and run the tests:
@@ -114,17 +119,19 @@ Binaries: `build_cmake/zd-linux`, `build_cmake/zd-gui`.
 ./zd-linux                       # interactive TUI dashboard (default on a terminal)
 ./zd-linux --iface wlan0 tui
 ./zd-linux scan                  # one active scan, print a table, exit (no root)
-sudo ./zd-linux watch            # monitor mode: stream defensive alerts live
-sudo ./zd-linux watch --channel 6
+sudo ./zd-linux watch --record session.zds   # monitor mode: stream alerts & record session
+./zd-linux replay session.zds    # deterministically replay a recorded session file
 ```
 
-TUI keys: `s` scan · `m` toggle monitor · `t` theme · `v` view · ↑/↓ select row ·
-`A` toggle authorization · `L` allow-list selected · `x` deauth selected · `c` set channel · `q` quit.
+TUI keys: `s` scan · `m` toggle monitor · `p`/`Tab` toggle APs vs Stations/Probes ·
+`t` theme · `v` view · ↑/↓ select row · `A` toggle authorization · `L` allow-list selected ·
+`x` deauth selected · `c` set channel · `w` save session · `r` load session · `q` quit.
 
 ### GUI
 
 ```bash
 ./zd-gui --iface wlan0
+./zd-gui --replay session.zds
 ```
 
 Scan, toggle monitor mode, watch the network table and defensive alert feed fill in, and use

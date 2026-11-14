@@ -41,32 +41,33 @@
   }
 
   function deduplicateSortedAps(sortedAps) {
-    return fp.foldl(sortedAps, [], function (acc, candidate) {
-      const alreadyPresent =
-        fp.countIf(acc, function (existing) {
-          if (candidate.ssid === '<hidden>') {
-            return existing.ssid === '<hidden>' && existing.channel === candidate.channel;
-          }
-          return existing.ssid === candidate.ssid;
-        }) > 0;
-
-      if (!alreadyPresent) {
-        return acc.concat([candidate]);
+    const result = [];
+    const seenSsids = new Set();
+    const seenHiddenChannels = new Set();
+    for (let i = 0; i < sortedAps.length; i++) {
+      const candidate = sortedAps[i];
+      if (candidate.ssid === '<hidden>') {
+        if (!seenHiddenChannels.has(candidate.channel)) {
+          seenHiddenChannels.add(candidate.channel);
+          result.push(candidate);
+        }
+      } else if (!seenSsids.has(candidate.ssid)) {
+        seenSsids.add(candidate.ssid);
+        result.push(candidate);
       }
-      return acc;
-    });
+    }
+    return result;
   }
 
   function buildChannelHistogram(aps) {
-    const counts = fp.foldl(aps, new Array(14).fill(0), function (hist, ap) {
-      const bucket = ap.channel >= 1 && ap.channel <= 13 ? ap.channel : 0;
-      if (hist[bucket] < 999) {
-        const copy = hist.slice();
-        copy[bucket] = copy[bucket] + 1;
-        return copy;
+    const counts = new Array(14).fill(0);
+    for (let i = 0; i < aps.length; i++) {
+      const ch = aps[i].channel;
+      const bucket = ch >= 1 && ch <= 13 ? ch : 0;
+      if (counts[bucket] < 999) {
+        counts[bucket] += 1;
       }
-      return hist;
-    });
+    }
     return Object.freeze({ counts: Object.freeze(counts) });
   }
 

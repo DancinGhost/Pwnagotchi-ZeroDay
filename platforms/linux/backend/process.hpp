@@ -8,6 +8,7 @@
 //   - runCapture(): run a short command to completion, capturing stdout.
 //   - DetachedProcess: launch a long-running tool (airodump-ng) and later signal/kill it.
 
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
@@ -122,26 +123,26 @@ public:
     }
 
     bool running() const {
-        if (!running_) {
+        if (!running_.load()) {
             return false;
         }
         int status = 0;
         const pid_t r = waitpid(pid_, &status, WNOHANG);
         if (r == pid_) {
-            running_ = false;  // reaped
+            running_.store(false);  // reaped
         }
-        return running_;
+        return running_.load();
     }
 
     void stop() {
-        if (!running_) {
+        if (!running_.load()) {
             return;
         }
         ::kill(pid_, SIGTERM);
         for (int i = 0; i < 20; ++i) {
             int status = 0;
             if (waitpid(pid_, &status, WNOHANG) == pid_) {
-                running_ = false;
+                running_.store(false);
                 return;
             }
             usleep(50 * 1000);  // 50ms
@@ -149,13 +150,13 @@ public:
         ::kill(pid_, SIGKILL);
         int status = 0;
         waitpid(pid_, &status, 0);
-        running_ = false;
+        running_.store(false);
     }
 
     pid_t pid() const { return pid_; }
 
 private:
-    mutable bool running_ = false;
+    mutable std::atomic<bool> running_{false};
     pid_t pid_ = -1;
 };
 

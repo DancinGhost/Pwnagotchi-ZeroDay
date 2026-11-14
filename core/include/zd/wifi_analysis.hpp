@@ -51,40 +51,44 @@ inline bool isStrongerAp(const AccessPoint& a, const AccessPoint& b) {
     return a.channel < b.channel;
 }
 
-// Pure fold that deduplicates repeated mesh BSSIDs from a sorted AP list,
+// Deduplicates repeated mesh BSSIDs from a sorted AP list,
 // keeping the strongest signal for each named SSID (and per-channel for <hidden>).
-inline std::vector<AccessPoint> deduplicateSortedAps(const std::vector<AccessPoint>& sortedAps) {
-    return fp::foldl(
-        sortedAps,
-        std::vector<AccessPoint>{},
-        [](std::vector<AccessPoint> acc, const AccessPoint& candidate) {
-            const bool alreadyPresent = fp::countIf(acc, [&](const AccessPoint& existing) {
-                if (candidate.ssid == "<hidden>") {
-                    return existing.ssid == "<hidden>" && existing.channel == candidate.channel;
-                }
-                return existing.ssid == candidate.ssid;
-            }) > 0;
-
-            if (!alreadyPresent) {
-                acc.push_back(candidate);
+// Optional `maxCount` stops as soon as enough unique APs are collected (0 = unlimited).
+inline std::vector<AccessPoint> deduplicateSortedAps(const std::vector<AccessPoint>& sortedAps,
+                                                     std::size_t maxCount = 0) {
+    std::vector<AccessPoint> result;
+    result.reserve(maxCount > 0 ? std::min(maxCount, sortedAps.size()) : sortedAps.size());
+    for (const AccessPoint& candidate : sortedAps) {
+        const bool isHidden = (candidate.ssid == "<hidden>");
+        bool alreadyPresent = false;
+        for (const AccessPoint& existing : result) {
+            if (isHidden ? (existing.ssid == "<hidden>" && existing.channel == candidate.channel)
+                         : (existing.ssid == candidate.ssid)) {
+                alreadyPresent = true;
+                break;
             }
-            return acc;
-        });
+        }
+        if (!alreadyPresent) {
+            result.push_back(candidate);
+            if (maxCount > 0 && result.size() >= maxCount) {
+                break;
+            }
+        }
+    }
+    return result;
 }
 
 // Pure fold computing per-channel AP counts (channels 1..13, plus bucket 0 for 5GHz/other).
 inline ChannelHistogram buildChannelHistogram(const std::vector<AccessPoint>& aps) {
-    return fp::foldl(
-        aps,
-        ChannelHistogram{},
-        [](ChannelHistogram hist, const AccessPoint& ap) {
-            const std::size_t bucket =
-                (ap.channel >= 1 && ap.channel <= 13) ? static_cast<std::size_t>(ap.channel) : 0u;
-            if (hist.counts[bucket] < 999u) {
-                hist.counts[bucket] = static_cast<uint16_t>(hist.counts[bucket] + 1u);
-            }
-            return hist;
-        });
+    ChannelHistogram hist{};
+    for (const AccessPoint& ap : aps) {
+        const std::size_t bucket =
+            (ap.channel >= 1 && ap.channel <= 13) ? static_cast<std::size_t>(ap.channel) : 0u;
+        if (hist.counts[bucket] < 999u) {
+            hist.counts[bucket] = static_cast<uint16_t>(hist.counts[bucket] + 1u);
+        }
+    }
+    return hist;
 }
 
 // Pure fold finding which 2.4 GHz channel (1..13) has the most APs.
@@ -116,10 +120,8 @@ constexpr int rssiToBars(int32_t rssi) {
 // Pure functional pipeline transforming raw scan records into an immutable ScanSummary.
 inline ScanSummary summarizeScan(const std::vector<AccessPoint>& rawNetworks,
                                  std::size_t maxTop = 6) {
-    const std::vector<AccessPoint> sanitized = fp::pipe(
-        rawNetworks,
-        fp::mapped(sanitizeAccessPoint),
-        fp::sortedBy(isStrongerAp));
+    std::vector<AccessPoint> sanitized = fp::map(rawNetworks, sanitizeAccessPoint);
+    std::sort(sanitized.begin(), sanitized.end(), isStrongerAp);
 
     const std::size_t total = sanitized.size();
     const std::size_t secureCount = fp::countIf(sanitized, [](const AccessPoint& ap) {
@@ -128,10 +130,7 @@ inline ScanSummary summarizeScan(const std::vector<AccessPoint>& rawNetworks,
     const ChannelHistogram histogram = buildChannelHistogram(sanitized);
     const int32_t busiestCh = findBusiestChannel(histogram);
 
-    const std::vector<AccessPoint> topUnique = fp::pipe(
-        sanitized,
-        deduplicateSortedAps,
-        fp::taken(maxTop));
+    const std::vector<AccessPoint> topUnique = deduplicateSortedAps(sanitized, maxTop);
 
     const int32_t bestRssi = sanitized.empty() ? -100 : sanitized.front().rssi;
     const std::string bestSsid = sanitized.empty() ? std::string{} : sanitized.front().ssid;

@@ -6,11 +6,12 @@
 // SecSession; this window only exposes it and refuses to arm it without explicit operator
 // confirmation + an allow-list entry.
 
+#include <QCheckBox>
 #include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QPushButton>
-#include <QCheckBox>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTimer>
 
@@ -31,12 +32,15 @@ private slots:
     void onToggleMonitor();
     void onCycleTheme();
     void onCycleView();
+    void onLoadSession();
+    void onSaveSession();
     void onAuthToggled(bool on);
     void onAllowSelected();
     void onDeauthSelected();
 
 private:
     void refreshNetworks();
+    void refreshStations();
     void refreshAlerts();
     void refreshStatus();
     void refreshChannels();
@@ -46,17 +50,22 @@ private:
     linux_app::AppController& app_;
     PetWidget* pet_ = nullptr;
     QLabel* status_ = nullptr;
+    QLabel* secMoodLabel_ = nullptr;
     QLabel* phrase_ = nullptr;
     QLabel* engineLabel_ = nullptr;
     QLabel* authBanner_ = nullptr;
     QLabel* channelsLabel_ = nullptr;
+    QTabWidget* tabs_ = nullptr;
     QTableWidget* table_ = nullptr;
+    QTableWidget* stationsTable_ = nullptr;
     QListWidget* alerts_ = nullptr;
     QCheckBox* authCheck_ = nullptr;
     QPushButton* monitorBtn_ = nullptr;
     QPushButton* deauthBtn_ = nullptr;
     QTimer* timer_ = nullptr;
-    std::size_t lastAlertCount_ = 0;
+    std::uint32_t lastTotalAlerts_ = 0;
+    std::string lastNetworksSig_;
+    std::string lastStationsSig_;
 };
 
 }  // namespace linux_gui

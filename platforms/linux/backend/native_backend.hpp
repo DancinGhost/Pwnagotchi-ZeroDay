@@ -186,9 +186,13 @@ private:
     }
 
     static bool parseMac(const std::string& s, uint8_t out[6]) {
+        const std::string n = sec::normalizeMac(s);
+        if (!sec::isValidMac(n)) {
+            return false;
+        }
         unsigned v[6];
-        if (std::sscanf(s.c_str(), "%x:%x:%x:%x:%x:%x", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) !=
-            6) {
+        if (std::sscanf(n.c_str(), "%2x:%2x:%2x:%2x:%2x:%2x", &v[0], &v[1], &v[2], &v[3], &v[4],
+                        &v[5]) != 6) {
             return false;
         }
         for (int i = 0; i < 6; ++i) {
@@ -199,7 +203,7 @@ private:
 
     // Build + send one 802.11 deauth (reason 7: class-3 frame from nonassociated STA).
     bool sendDeauth(const uint8_t* dst, const uint8_t* src, const uint8_t* bssid) {
-        uint8_t frame[10 + 24 + 2];
+        uint8_t frame[8 + 24 + 2];
         std::size_t n = 0;
         // Minimal radiotap header (version 0, length 8, no fields).
         const uint8_t rt[8] = {0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00};

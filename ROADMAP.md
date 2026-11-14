@@ -16,33 +16,38 @@ not yet implemented.
   associated to anything nearby. Capped (`kMaxStations`, `kMaxProbedSsidsPerStation`) like
   the existing alert ring buffer. Wired through `secops_hal.hpp::SecSession::ingest()`,
   which already had the probed SSID decoded in `CapturedFrame` but was discarding it.
-- **WPS detection flag**: `WifiTarget.wps` / `ApObserved.wps`, passive and informational
-  only (no new transmit capability — consistent with the existing authorization gate).
+- **WPS detection flag**: `WifiTarget.wps` / `ApObserved.wps` / `CapturedFrame.wps`, wired
+  through `dot11.hpp::parseTaggedParams` (WPS vendor IE `00:50:F2:04`) and
+  `SecSession::ingest()`, passive and informational only (no new transmit capability —
+  consistent with the existing authorization gate).
 - **`SecMood`**: a small pure signal (`Calm` / `Watchful` / `Alarmed`) derived from recent
   alert severity (`deriveSecMood`), decoupled from the cross-platform `Mood` enum so
   hardware that has never heard of `secops.hpp` is unaffected.
 - **Session record/replay wire format**: `encodeSecEvent`/`decodeSecEvent` (and the
   `...Events` / `replaySecEvents` batch helpers) — a pure, escaped, line-based text
   encoding for the `SecEvent` log. Lets a session be replayed deterministically through
-  `reduce()` to reproduce the exact `SecState` it produced live.
+  `reduce()` to reproduce the exact `SecState` it produced live. Wired into `zd-linux`
+  (`--record`, `--replay`, `replay <file>`, and TUI `w`/`r` hotkeys) and `zd-gui`
+  ("Load Session…" / "Save Session…").
+- **Bounded collections in `SecState`**: `kMaxTargets`, `kMaxStations`, `kMaxAlerts`,
+  `kMaxDeauthTrackers`, `kMaxBssidSsids`, and `kMaxSsidsPerBssid` cap all in-memory
+  tables with LRU/FIFO eviction so multi-hour monitoring sessions have strictly bounded
+  memory usage.
 
 ## Core follow-ups (wiring the above into a shell)
 
-- [ ] **Linux CLI**: `--record <file>` / `--replay <file>` flags on `zd-linux watch` using
-  `encodeSecEvents`/`decodeSecEvents` for file I/O (the pure half is done; this is just
-  `fopen`/`fwrite` in `platforms/linux/app/controller.hpp`).
-- [ ] **Linux GUI**: a "Load session" action in `zd-gui` that replays a recorded file
-  instead of live capture, for demos/reports without touching hardware.
-- [ ] Surface the station/probe table in the `zd-linux` TUI (new view) and `zd-gui` (new
-  tab), including a flag for stations whose probed SSIDs match a known-weak/default
-  pattern.
-- [ ] Surface `WifiTarget.wps` in the network table (`*` style indicator next to the
-  existing encryption marker).
-- [ ] Surface `SecMood`/alert severity in the Linux GUI pet widget (color/face shift) and
-  TUI status line, so `watch` is informative as ambient background status, not just a log.
-- [ ] Actually detect WPS: `platforms/linux/backend/dot11.hpp::parseTaggedParams` doesn't
-  check the WPS vendor IE (OUI `00-50-F2-04`) yet — the core field exists, nothing sets it
-  from live frames yet. Same gap applies to any `nmcli`/`iw` recon parser path.
+- [x] **Linux CLI**: `--record <file>` / `--replay <file>` flags and `replay <file>`
+  subcommand on `zd-linux` (plus interactive `w`/`r` save/load keys in the TUI).
+- [x] **Linux GUI**: "Load Session…" and "Save Session…" actions in `zd-gui` that replay or
+  export recorded sessions without touching hardware.
+- [x] Surface the station/probe table in the `zd-linux` TUI (`[p]` / `Tab` view toggle) and
+  `zd-gui` (`Stations / Probes` tab), including a `WEAK!` / `WEAK / DEFAULT` flag
+  (`hasWeakOrDefaultProbe`) for stations probing default/open-bait SSIDs.
+- [x] Surface `WifiTarget.wps` (`WPS*`) in both the `zd-linux` and `zd-gui` network tables.
+- [x] Surface `SecMood`/alert severity in the Linux GUI pet widget (amber/red bezel shift +
+  `SEC: CALM/WATCHFUL/ALARMED` status badge) and `zd-linux` TUI header / `watch` stream.
+- [ ] Detect WPS in active scan paths (`nmcli`/`iw` recon parsers) in addition to the
+  monitor-mode 802.11 beacon/probe-response parser (`dot11.hpp`).
 
 ## Linux desktop (CLI/TUI + Qt6 GUI)
 

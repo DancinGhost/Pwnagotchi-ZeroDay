@@ -22,15 +22,15 @@
     },
     con: {
       id: 'con',
-      label: 'DEF CON Floor',
+      label: 'SecCon Floor',
       subtitle: 'Packed hacker spectrum (14+ APs)',
       baseNetworks: [
-        { ssid: 'DEFCON-Open', rssi: -46, channel: 6, secure: false },
+        { ssid: 'SecCon-Open', rssi: -46, channel: 6, secure: false },
         { ssid: 'Wall_Of_Sheep', rssi: -51, channel: 1, secure: false },
         { ssid: 'BadgeLife_Mesh', rssi: -54, channel: 11, secure: true },
         { ssid: 'Gibson_Mainframe', rssi: -58, channel: 6, secure: true },
         { ssid: 'Packet_Village', rssi: -60, channel: 1, secure: true },
-        { ssid: 'Hak5_Pineapple_7', rssi: -63, channel: 6, secure: false },
+        { ssid: 'Rogue_Twin_AP_7', rssi: -63, channel: 6, secure: false },
         { ssid: 'Drop_Tables_LAN', rssi: -65, channel: 11, secure: true },
         { ssid: 'ZeroCool_Uplink', rssi: -68, channel: 3, secure: true },
         { ssid: 'AcidBurn_Deck', rssi: -70, channel: 8, secure: true },
@@ -48,7 +48,7 @@
       subtitle: 'Booming bench signal (-41 dBm)',
       baseNetworks: [
         { ssid: 'ZeroDay_Bench_2G', rssi: -41, channel: 6, secure: true },
-        { ssid: 'M5Stick_TestRig', rssi: -53, channel: 1, secure: true },
+        { ssid: 'Pocket_TestRig', rssi: -53, channel: 1, secure: true },
         { ssid: 'LogicAnalyzer_AP', rssi: -64, channel: 11, secure: true },
         { ssid: 'IoT_Sandbox_Open', rssi: -73, channel: 6, secure: false }
       ]
@@ -79,15 +79,15 @@
   const FUNNY_HACKER_SSIDS = Object.freeze([
     'PrettyFlyForAWiFi',
     'FBI_Van_#404',
-    'Wu_Tang_LAN',
+    'Shadow_Clan_LAN',
     'sudo_make_sandwich',
     '404_Net_Not_Found',
-    'Skynet_Defense_2G',
+    'Cyber_Defense_2G',
     'It_Hurts_When_IP',
     'TellMyWiFiLoveHer',
     'LAN_Solo',
-    'Abraham_Linksys',
-    'Flipper_Zero_Friend',
+    'Router_McRouterface',
+    'Pocket_SubGHz_Friend',
     'Pwnagotchi_SnackBar',
     'rm_-rf_slash_wifi',
     'chmod_777_guest',

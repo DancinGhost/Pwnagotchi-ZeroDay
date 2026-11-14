@@ -107,7 +107,7 @@ inline std::vector<AccessPoint> parseNmcliScan(const std::string& text) {
         }
         // Fields: BSSID, SSID, CHAN, SECURITY, SIGNAL
         AccessPoint ap;
-        ap.ssid = trim(f[1]);
+        ap.ssid = sec::sanitizePrintableText(trim(f[1]));
         ap.channel = std::atoi(f[2].c_str());
         const sec::Encryption enc = encryptionFromText(f[3]);
         ap.secure = (enc != sec::Encryption::Open && enc != sec::Encryption::Unknown);
@@ -140,7 +140,7 @@ inline std::vector<ScannedAp> parseNmcliScanDetailed(const std::string& text) {
         }
         ScannedAp ap;
         ap.bssid = sec::normalizeMac(trim(f[0]));
-        ap.ssid = trim(f[1]);
+        ap.ssid = sec::sanitizePrintableText(trim(f[1]));
         ap.channel = std::atoi(f[2].c_str());
         ap.enc = encryptionFromText(f[3]);
         ap.rssi = nmcliSignalToDbm(std::atoi(f[4].c_str()));
@@ -170,7 +170,8 @@ struct AirodumpAp {
 
 struct AirodumpStation {
     std::string mac;
-    std::string bssid;   // associated BSSID, or "(not associated)"
+    std::string bssid;   // associated BSSID, or "" when "(not associated)"
+    std::vector<std::string> probedEssids;
 };
 
 struct AirodumpDump {
@@ -226,18 +227,25 @@ inline AirodumpDump parseAirodumpCsv(const std::string& text) {
             ap.enc = encryptionFromText(f[5] + " " + f[6] + " " + f[7]);
             ap.rssi = std::atoi(f[8].c_str());
             ap.beacons = static_cast<uint32_t>(std::atoi(f[9].c_str()));
-            ap.ssid = f[13];
+            ap.ssid = sec::sanitizePrintableText(f[13]);
             dump.aps.push_back(ap);
         } else {
             if (f.size() < 6) {
                 continue;
             }
+            if (!sec::isValidMac(f[0])) {
+                continue;
+            }
             AirodumpStation st;
             st.mac = sec::normalizeMac(f[0]);
-            st.bssid = sec::normalizeMac(f[5]);
-            if (!st.mac.empty()) {
-                dump.stations.push_back(st);
+            st.bssid = sec::isValidMac(f[5]) ? sec::normalizeMac(f[5]) : std::string{};
+            for (std::size_t k = 6; k < f.size(); ++k) {
+                const std::string cleaned = sec::sanitizePrintableText(f[k]);
+                if (!cleaned.empty()) {
+                    st.probedEssids.push_back(cleaned);
+                }
             }
+            dump.stations.push_back(st);
         }
     }
     return dump;

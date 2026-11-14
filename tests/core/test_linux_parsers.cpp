@@ -59,7 +59,9 @@ void testAirodumpCsv() {
         "\r\n"
         "Station MAC, First time seen, Last time seen, Power, # packets, BSSID, Probed ESSIDs\r\n"
         "99:88:77:66:55:44, 2026-01-01 10:01:00, 2026-01-01 10:05:00, -50, 42, "
-        "00:11:22:33:44:55, HomeNet\r\n";
+        "00:11:22:33:44:55, HomeNet, CorpWiFi\r\n"
+        "11:22:33:44:55:66, 2026-01-01 10:02:00, 2026-01-01 10:05:00, -65, 10, "
+        "(not associated), FreeCafe\r\n";
 
     const AirodumpDump dump = parseAirodumpCsv(csv);
     assert(dump.aps.size() == 2);
@@ -69,9 +71,16 @@ void testAirodumpCsv() {
     assert(dump.aps[0].rssi == -42);
     assert(dump.aps[0].ssid == "HomeNet");
     assert(dump.aps[1].enc == zd::sec::Encryption::Open);
-    assert(dump.stations.size() == 1);
+    assert(dump.stations.size() == 2);
     assert(dump.stations[0].mac == "99:88:77:66:55:44");
     assert(dump.stations[0].bssid == "00:11:22:33:44:55");
+    assert(dump.stations[0].probedEssids.size() == 2);
+    assert(dump.stations[0].probedEssids[0] == "HomeNet");
+    assert(dump.stations[0].probedEssids[1] == "CorpWiFi");
+    assert(dump.stations[1].mac == "11:22:33:44:55:66");
+    assert(dump.stations[1].bssid.empty());
+    assert(dump.stations[1].probedEssids.size() == 1);
+    assert(dump.stations[1].probedEssids[0] == "FreeCafe");
 }
 
 std::vector<uint8_t> minimalRadiotap() {
@@ -142,15 +151,51 @@ void testDecodedFrameFeedsEngine() {
     append(f, {0, 0, 0, 0, 0, 0, 0, 0, 0x64, 0x00, 0x00, 0x00});  // fixed, open caps
     append(f, {0x00, 0x04, 'O', 'p', 'e', 'n'});
     append(f, {0x03, 0x01, 0x01});
+    // WPS vendor IE (tag 221, OUI 00:50:F2, type 04)
+    append(f, {221, 0x06, 0x00, 0x50, 0xF2, 0x04, 0x10, 0x4a});
 
     const auto decoded = decodeRadiotapFrame(f.data(), f.size(), 10u);
     assert(decoded.has_value());
     assert(decoded->enc == zd::sec::Encryption::Open);
+    assert(decoded->wps);
 
     zd::sec::SecSession session;
     session.ingest(*decoded);
     const auto* t = zd::sec::findTarget(session.state(), "0a:0b:0c:0d:0e:0f");
-    assert(t != nullptr && t->ssid == "Open" && t->channel == 1);
+    assert(t != nullptr && t->ssid == "Open" && t->channel == 1 && t->wps);
+}
+
+void testMalformedAndTruncatedFrames() {
+    // Empty or shorter than 8-byte radiotap header
+    const uint8_t tiny[4] = {0x00, 0x00, 0x08, 0x00};
+    assert(!decodeRadiotapFrame(tiny, sizeof(tiny), 1u).has_value());
+
+    // Radiotap header claims length larger than packet buffer
+    const uint8_t bogusLen[12] = {0x00, 0x00, 0x40, 0x00, 0, 0, 0, 0, 0, 0, 0, 0};
+    assert(!decodeRadiotapFrame(bogusLen, sizeof(bogusLen), 1u).has_value());
+
+    // Extended present bit (bit 31) chaining past rtLen without terminating
+    const uint8_t endlessPresent[12] = {0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x80,
+                                        0x00, 0x00, 0x00, 0x80};
+    assert(!decodeRadiotapFrame(endlessPresent, sizeof(endlessPresent), 1u).has_value());
+
+    // Present flags claim TSFT (8 bytes) + Channel (4 bytes) + Signal (1 byte), but rtLen is only 12
+    std::vector<uint8_t> truncatedRt = {0x00, 0x00, 0x0c, 0x00, 0x29, 0x00, 0x00, 0x00,
+                                        0x01, 0x02, 0x03, 0x04};
+    append(truncatedRt, {0xC0, 0x00, 0x00, 0x00});
+    append(truncatedRt, {0x99, 0x88, 0x77, 0x66, 0x55, 0x44});
+    append(truncatedRt, {0x00, 0x11, 0x22, 0x33, 0x44, 0x55});
+    append(truncatedRt, {0x00, 0x11, 0x22, 0x33, 0x44, 0x55});
+    append(truncatedRt, {0x00, 0x00});
+    const auto d = decodeRadiotapFrame(truncatedRt.data(), truncatedRt.size(), 10u);
+    assert(d.has_value());
+    assert(d->rssi == -100);  // Signal field was out-of-bounds of rtLen, safely defaulted
+
+    // ANSI escape sequence in nmcli & airodump SSIDs is stripped
+    const std::string dirtyNmcli = "00\\:11\\:22\\:33\\:44\\:55:Evil\x1b[31mNet:6:WPA2:80\n";
+    const auto parsedNm = parseNmcliScanDetailed(dirtyNmcli);
+    assert(parsedNm.size() == 1u);
+    assert(parsedNm[0].ssid == "Evil[31mNet");
 }
 
 }  // namespace
@@ -162,6 +207,7 @@ int main() {
     testDecodeBeacon();
     testDecodeDeauth();
     testDecodedFrameFeedsEngine();
+    testMalformedAndTruncatedFrames();
     std::cout << "[linux-parsers] all backend parser/decoder tests passed\n";
     return 0;
 }

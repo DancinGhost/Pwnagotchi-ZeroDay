@@ -13,17 +13,25 @@ mkdir -p "$DIST_DIR"
 
 echo "=== Packaging pwnagotchi-zeroday Release Assets ==="
 
-# 1. Package Linux Desktop Binaries
-if [ -f "$ROOT_DIR/build_cmake/zd-linux" ]; then
-    echo "[+] Packaging Linux x86_64 binaries..."
+# 1. Package Linux Desktop Binaries (prefer CMake build_cmake/, fallback to Makefile build/)
+LINUX_BUILD_DIR=""
+if [ -f "$ROOT_DIR/build_cmake/zd-linux" ] || [ -f "$ROOT_DIR/build_cmake/zd_sim" ]; then
+    LINUX_BUILD_DIR="$ROOT_DIR/build_cmake"
+elif [ -f "$ROOT_DIR/build/zd-linux" ] || [ -f "$ROOT_DIR/build/zd_sim" ]; then
+    LINUX_BUILD_DIR="$ROOT_DIR/build"
+fi
+
+if [ -n "$LINUX_BUILD_DIR" ]; then
+    echo "[+] Packaging Linux x86_64 binaries from $LINUX_BUILD_DIR..."
     LINUX_DIR="$(mktemp -d)"
     mkdir -p "$LINUX_DIR/bin"
-    cp "$ROOT_DIR/build_cmake/zd-linux" "$LINUX_DIR/bin/"
-    [ -f "$ROOT_DIR/build_cmake/zd-gui" ] && cp "$ROOT_DIR/build_cmake/zd-gui" "$LINUX_DIR/bin/"
-    [ -f "$ROOT_DIR/build_cmake/zd_sim" ] && cp "$ROOT_DIR/build_cmake/zd_sim" "$LINUX_DIR/bin/"
+    [ -f "$LINUX_BUILD_DIR/zd-linux" ] && cp "$LINUX_BUILD_DIR/zd-linux" "$LINUX_DIR/bin/"
+    [ -f "$LINUX_BUILD_DIR/zd-gui" ] && cp "$LINUX_BUILD_DIR/zd-gui" "$LINUX_DIR/bin/"
+    [ -f "$LINUX_BUILD_DIR/zd_sim" ] && cp "$LINUX_BUILD_DIR/zd_sim" "$LINUX_DIR/bin/"
     cp "$ROOT_DIR/README.md" "$LINUX_DIR/"
     cp "$ROOT_DIR/LICENSE" "$LINUX_DIR/"
     cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$LINUX_DIR/"
+    [ -f "$ROOT_DIR/docs/LINUX.md" ] && cp "$ROOT_DIR/docs/LINUX.md" "$LINUX_DIR/"
     tar -czf "$DIST_DIR/pwnagotchi-zd-linux-x86_64.tar.gz" -C "$LINUX_DIR" .
     rm -rf "$LINUX_DIR"
 fi

@@ -39,6 +39,7 @@ struct CapturedFrame {
     int32_t channel = 0;
     int32_t rssi = -100;
     Encryption enc = Encryption::Unknown;
+    bool wps = false;             // WPS vendor IE (00:50:F2:04) present in beacon/probe-resp
 };
 
 // --- Adapter interfaces --------------------------------------------------------------
@@ -91,7 +92,16 @@ public:
     virtual void record(const std::string& line) = 0;
 };
 
+// Optional sink for live session event recording (--record <file>).
+class ISessionRecorder {
+public:
+    virtual ~ISessionRecorder() = default;
+    virtual void recordEvent(const std::string& encodedLine) = 0;
+};
+
 // --- Coordinator ---------------------------------------------------------------------
+
+constexpr std::size_t kMaxRecordedEvents = 10000u;
 
 class SecSession {
 public:
@@ -101,26 +111,42 @@ public:
     Authorization& authorization() { return auth_; }
     const Authorization& authorization() const { return auth_; }
 
+    const std::vector<SecEvent>& events() const { return events_; }
+
+    void setRecorder(ISessionRecorder* rec) { recorder_ = rec; }
+
+    // Replace current state by replaying a sequence of recorded events through reduce().
+    void loadEvents(const std::vector<SecEvent>& recorded) {
+        state_ = replaySecEvents(recorded);
+        events_ = recorded;
+        if (events_.size() > kMaxRecordedEvents) {
+            events_.erase(events_.begin(),
+                          events_.begin() +
+                              static_cast<std::ptrdiff_t>(events_.size() - kMaxRecordedEvents));
+        }
+    }
+
     // Feed one observed frame into the pure engine.
     void ingest(const CapturedFrame& f) {
         switch (f.kind) {
             case FrameKind::Beacon:
-                dispatch(ApObserved{f.nowMs, f.bssid, f.ssid, f.channel, f.rssi, f.enc});
+                dispatch(ApObserved{f.nowMs, f.bssid, f.ssid, f.channel, f.rssi, f.enc, f.wps});
                 break;
             case FrameKind::ProbeRequest:
                 // A probe request reveals a station; attribute to BSSID if known (directed
                 // probe) and always record the probed SSID as a station-level signal, since
                 // broadcast/unassociated probes (no BSSID) still leak a preferred network.
-                if (!f.bssid.empty()) {
+                if (!f.bssid.empty() && !isBroadcastMac(f.bssid)) {
                     dispatch(ClientObserved{f.nowMs, f.bssid, f.source});
                 }
-                if (!f.source.empty()) {
+                if (!f.source.empty() && !isBroadcastMac(f.source)) {
                     dispatch(ProbeRequestObserved{f.nowMs, f.source, f.ssid});
                 }
                 break;
             case FrameKind::Data:
                 dispatch(DataFrameObserved{f.nowMs, f.bssid});
-                if (!f.source.empty() && !isBroadcastMac(f.source)) {
+                if (!f.source.empty() && !isBroadcastMac(f.source) &&
+                    normalizeMac(f.source) != normalizeMac(f.bssid)) {
                     dispatch(ClientObserved{f.nowMs, f.bssid, f.source});
                 }
                 break;
@@ -137,7 +163,18 @@ public:
         }
     }
 
-    void dispatch(const SecEvent& ev) { state_ = reduce(state_, ev); }
+    void dispatch(const SecEvent& ev) {
+        state_ = reduce(state_, ev);
+        if (events_.size() >= kMaxRecordedEvents + (kMaxRecordedEvents / 10u)) {
+            events_.erase(events_.begin(),
+                          events_.begin() +
+                              static_cast<std::ptrdiff_t>(events_.size() - kMaxRecordedEvents + 1u));
+        }
+        events_.push_back(ev);
+        if (recorder_ != nullptr) {
+            recorder_->recordEvent(encodeSecEvent(ev));
+        }
+    }
 
     // Fast, synchronous half of the transmit chokepoint: resolves the authorization
     // decision and records the attempt (state + audit log) immediately. Never calls the
@@ -146,14 +183,16 @@ public:
     AuthDecision beginDeauth(const std::string& bssid, const std::string& client, uint32_t count,
                              uint32_t nowMs, IAuditLog* audit = nullptr) {
         const AuthDecision decision = authorize(auth_, bssid);
-        dispatch(InjectionAttempt{nowMs, bssid, client, count, decision});
+        const std::string normClient =
+            (client.empty() || isBroadcastMac(normalizeMac(client))) ? std::string{} : normalizeMac(client);
+        dispatch(InjectionAttempt{nowMs, bssid, normClient, count, decision});
         if (audit != nullptr) {
             if (decision != AuthDecision::Allowed) {
                 audit->record("DEAUTH BLOCKED bssid=" + normalizeMac(bssid) +
                               " reason=" + std::string(authDecisionLabel(decision)));
             } else {
                 audit->record("DEAUTH ALLOWED bssid=" + normalizeMac(bssid) +
-                              " client=" + (client.empty() ? std::string("broadcast") : client) +
+                              " client=" + (normClient.empty() ? std::string("broadcast") : normClient) +
                               " count=" + std::to_string(count));
             }
         }
@@ -184,6 +223,8 @@ public:
 private:
     SecState state_{};
     Authorization auth_{};
+    std::vector<SecEvent> events_{};
+    ISessionRecorder* recorder_ = nullptr;
 };
 
 }  // namespace sec

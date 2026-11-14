@@ -6,8 +6,8 @@
   --border-dim: #253047;
   --border-bright: #38496b;
   --text-main: #e6edf7;
-  --text-muted: #8b9bb4;
-  --text-dim: #5d6d87;
+  --text-muted: #9aa8c2;
+  --text-dim: #8b9bb4;
   --accent: #00e5ff;
   --accent-soft: rgba(0, 229, 255, 0.14);
   --accent-green: #38ff7a;
@@ -1053,4 +1053,17 @@ input[type="range"] {
   color: #fff;
   font-size: 12px;
   outline: none;
+}
+
+.terminal-input-row:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: rgba(0, 229, 255, 0.05);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

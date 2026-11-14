@@ -50,13 +50,20 @@ def ensure_esptool():
     except (subprocess.SubprocessError, FileNotFoundError):
         pass
 
-    print("[*] esptool not detected. Installing via pip...")
+    print("[*] esptool not detected.")
+    if not sys.stdin.isatty():
+        print("[!] Please install esptool manually: python3 -m pip install 'esptool==4.8.1'")
+        sys.exit(1)
+    ans = input("    Install esptool==4.8.1 via pip now? [y/N]: ").strip().lower()
+    if ans != "y":
+        print("[!] Aborted. Install esptool manually: python3 -m pip install 'esptool==4.8.1'")
+        sys.exit(1)
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "esptool"])
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--only-binary", ":all:", "esptool==4.8.1"])
         return [sys.executable, "-m", "esptool"]
     except Exception as err:
-        print(f"[!] Failed to auto-install esptool: {err}")
-        print("    Please install esptool manually: pip install esptool")
+        print(f"[!] Failed to install esptool: {err}")
+        print("    Please install esptool manually: python3 -m pip install 'esptool==4.8.1'")
         sys.exit(1)
 
 def main():

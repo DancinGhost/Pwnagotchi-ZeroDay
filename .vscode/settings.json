@@ -3,7 +3,10 @@
     "C_Cpp.default.includePath": [
         "${workspaceFolder}/core/include",
         "${workspaceFolder}/render/include",
-        "${workspaceFolder}/platforms/m5stick"
+        "${workspaceFolder}/platforms/common",
+        "${workspaceFolder}/platforms/linux",
+        "${workspaceFolder}/platforms/m5stick",
+        "${workspaceFolder}/platforms/tdeck"
     ],
     "files.associations": {
         "*.hpp": "cpp",

@@ -142,8 +142,8 @@ Build both front-ends and run the full host test suite (requires `qt6-base-dev`,
 `libncurses-dev`, `cmake`; active features use the `aircrack-ng` suite + `iw`/`nmcli`):
 
 ```bash
-sudo apt install cmake pkg-config qt6-base-dev libpcap-dev libnl-3-dev libnl-genl-3-dev \
-                 libncurses-dev aircrack-ng iw network-manager
+sudo apt install cmake pkg-config qt6-base-dev libpcap-dev libncurses-dev \
+                 aircrack-ng iw network-manager
 cmake -B build_cmake && cmake --build build_cmake -j
 ctest --test-dir build_cmake --output-on-failure
 

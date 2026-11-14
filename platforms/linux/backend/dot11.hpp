@@ -57,14 +57,21 @@ inline RadiotapInfo parseRadiotap(const uint8_t* data, std::size_t len) {
         off += 4;
     }
 
-    auto align = [&](std::size_t a) { off = (off + (a - 1)) & ~(a - 1); };
+    auto advanceField = [&](std::size_t a, std::size_t sz) noexcept -> bool {
+        off = (off + (a - 1u)) & ~(a - 1u);
+        if (off + sz > rtLen) {
+            return false;
+        }
+        off += sz;
+        return true;
+    };
     const uint32_t pbit = firstPresent;
-    if (pbit & (1u << 0)) { align(8); off += 8; }   // TSFT
-    if (pbit & (1u << 1)) { off += 1; }             // Flags
-    if (pbit & (1u << 2)) { off += 1; }             // Rate
-    if (pbit & (1u << 3)) { align(2); off += 4; }   // Channel
-    if (pbit & (1u << 4)) { off += 2; }             // FHSS
-    if (pbit & (1u << 5)) {                         // dBm antenna signal
+    if ((pbit & (1u << 0)) && !advanceField(8, 8)) return info;  // TSFT
+    if ((pbit & (1u << 1)) && !advanceField(1, 1)) return info;  // Flags
+    if ((pbit & (1u << 2)) && !advanceField(1, 1)) return info;  // Rate
+    if ((pbit & (1u << 3)) && !advanceField(2, 4)) return info;  // Channel
+    if ((pbit & (1u << 4)) && !advanceField(2, 2)) return info;  // FHSS
+    if (pbit & (1u << 5)) {                                      // dBm antenna signal
         if (off < rtLen) {
             info.signalDbm = static_cast<int8_t>(data[off]);
             info.hasSignal = true;
@@ -133,9 +140,12 @@ inline void parseTaggedParams(const uint8_t* tags, std::size_t tlen, bool privac
             rsn = true;
             rsnEnc = encryptionFromRsn(tags + body, tl);
         } else if (id == 221 && tl >= 4) {  // vendor-specific
-            if (tags[body] == 0x00 && tags[body + 1] == 0x50 && tags[body + 2] == 0xF2 &&
-                tags[body + 3] == 0x01) {
-                wpaVendor = true;  // Microsoft WPA1 IE
+            if (tags[body] == 0x00 && tags[body + 1] == 0x50 && tags[body + 2] == 0xF2) {
+                if (tags[body + 3] == 0x01) {
+                    wpaVendor = true;  // Microsoft WPA1 IE
+                } else if (tags[body + 3] == 0x04) {
+                    out.wps = true;    // Wi-Fi Protected Setup (WPS) IE
+                }
             }
         }
         i = body + tl;

@@ -280,7 +280,7 @@ function testThemesMultiDeviceAndCppParity() {
   });
   assert.strictEqual(ui.buildUiFrame(expired, { width: 240, height: 135 }).toast.visible, false);
 
-  // Trademark & brand cleanliness check on theme metadata
+  // Trademark & brand cleanliness check on theme metadata and simulated airwaves
   const bannedTerms = [
     'kali',
     'offsec',
@@ -292,6 +292,12 @@ function testThemesMultiDeviceAndCppParity() {
     'ubuntu',
     'flipper',
     'hak5',
+    'defcon',
+    'def con',
+    'linksys',
+    'wu_tang',
+    'wutang',
+    'skynet',
     'nintendo',
     'apple',
     'microsoft',
@@ -307,6 +313,32 @@ function testThemesMultiDeviceAndCppParity() {
       );
     }
   }
+  for (const preset of Object.values(sim.PRESETS)) {
+    const presetText = (
+      preset.label +
+      ' ' +
+      preset.subtitle +
+      ' ' +
+      preset.baseNetworks.map((n) => n.ssid).join(' ')
+    ).toLowerCase();
+    for (const term of bannedTerms) {
+      assert.strictEqual(
+        presetText.includes(term),
+        false,
+        'Airwave preset "' + preset.id + '" must not contain restricted brand term "' + term + '"'
+      );
+    }
+  }
+  for (const ssid of sim.FUNNY_HACKER_SSIDS) {
+    const lower = ssid.toLowerCase();
+    for (const term of bannedTerms) {
+      assert.strictEqual(
+        lower.includes(term),
+        false,
+        'FUNNY_HACKER_SSIDS entry "' + ssid + '" must not contain restricted brand term "' + term + '"'
+      );
+    }
+  }
 
   // Exact C++ <-> JS catalog parity against core/include/zd/theme.hpp
   const cppHeaderPath = path.resolve(__dirname, '../../core/include/zd/theme.hpp');
@@ -317,7 +349,7 @@ function testThemesMultiDeviceAndCppParity() {
   assert.strictEqual(Number(toastMatch[1]), themes.THEME_TOAST_MS);
 
   const entryRe =
-    /\{ThemeId::(\w+),\s*"([^"]+)",\s*"([^"]+)",\s*\n\s*"([^"]+)",\s*(true|false),\s*\n\s*\{\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\}\}\}/g;
+    /\{ThemeId::(\w+),\s*"([^"]+)",\s*"([^"]+)",\s*"([^"]+)",\s*(true|false),\s*\{\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\},\s*\{(\d+),\s*(\d+),\s*(\d+)\}\}\}/g;
 
   const cppEntries = [];
   let m;

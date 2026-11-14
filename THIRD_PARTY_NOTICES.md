@@ -30,15 +30,29 @@ These are **dynamically** linked against system libraries that are not shipped i
 | libpcap | BSD-3-Clause | https://www.tcpdump.org/ |
 | ncurses | MIT-style (X11) | https://invisible-island.net/ncurses/ |
 
+## Embedded 5×7 Bitmap Font (`surface_rgb565.hpp` & `canvas_gfx.js`)
+
+The host/native rasterizer (`render/include/zd/render/surface_rgb565.hpp`) and browser canvas
+rasterizer (`platforms/web/js/canvas_gfx.js`) include the standard 5×7 ASCII GLCD bitmap font
+table (`kFont5x7` / `FONT_5X7`), originally distributed with **Adafruit_GFX** (`glcdfont.c`)
+under the **BSD-2-Clause License** (Copyright (c) 2012 Adafruit Industries).
+
 ## Tooling (not redistributed)
 
-The flasher scripts invoke, but do not bundle, [esptool](https://github.com/espressif/esptool)
-(GPL-2.0-or-later), installed separately by the user via `pip`.
+- **Flasher scripts** invoke, but do not bundle or link, [esptool](https://github.com/espressif/esptool)
+  (GPL-2.0-or-later), installed separately by the user via `pip`.
+- **Linux CLI fallback adapters** (`platforms/linux/backend/cli_backend.hpp`) optionally invoke standard
+  system utilities as separate OS subprocesses (`fork`/`execvp`) when present on the host:
+  `aircrack-ng` (`airmon-ng`, `airodump-ng`, `aireplay-ng`, GPL-2.0-or-later), `iw` (ISC), and
+  NetworkManager `nmcli` (GPL-2.0-or-later). None of these tools are linked into or distributed
+  with `pwnagotchi-zeroday`.
 
 ## Trademarks
 
 "Pwnagotchi" refers to the original open-source project by evilsocket
 (https://github.com/evilsocket/pwnagotchi, GPL-3.0); this project is an independent
-reimplementation inspired by it and is not affiliated with or endorsed by it. Tamagotchi is a registered trademark of Bandai; M5Stack, LILYGO,
-Espressif, and Qt are trademarks of their respective owners. Their use here is
-descriptive only.
+clean-room C++17/JS implementation inspired by it and is not affiliated with or endorsed by it.
+Tamagotchi is a registered trademark of Bandai; M5Stack, M5StickC, LILYGO, T-Deck,
+Espressif, and Qt are trademarks of their respective owners. Their use in hardware target names
+and documentation is strictly nominative and descriptive to identify compatible hardware and
+toolchains.

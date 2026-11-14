@@ -88,6 +88,22 @@ inline bool isBroadcastMac(const std::string& mac) {
     return mac == "ff:ff:ff:ff:ff:ff" || mac.empty();
 }
 
+// True if `raw` is empty, broadcast, or an IEEE 802 group/multicast address (bit 0 of the
+// first octet set, e.g. ff:ff:ff:ff:ff:ff, 01:00:5e:xx:xx:xx, 33:33:xx:xx:xx). Used to keep
+// multicast group frames from polluting the client station table or inflating clientCount.
+inline bool isMulticastMac(const std::string& raw) {
+    const std::string n = normalizeMac(raw);
+    if (isBroadcastMac(n)) {
+        return true;
+    }
+    if (n.size() == 17u && std::isxdigit(static_cast<unsigned char>(n[1]))) {
+        const char c = n[1];
+        const int nibble = (c >= '0' && c <= '9') ? (c - '0') : (c - 'a' + 10);
+        return (nibble & 1) != 0;
+    }
+    return false;
+}
+
 // True if `raw` contains exactly 12 hex digits once separators/whitespace are stripped,
 // i.e. normalizeMac(raw) would produce a well-formed "aa:bb:cc:dd:ee:ff" address rather than
 // just returning the (lowered/trimmed) input verbatim. Used to reject malformed BSSID/client
@@ -102,6 +118,40 @@ inline bool isValidMac(const std::string& raw) {
         }
     }
     return hexCount == 12u;
+}
+
+// True if `iface` is a legal Linux network interface name (1..15 chars, IFNAMSIZ - 1,
+// alphanumeric or '_', '-', '.', and not starting with '-' or '.'). Prevents option/argument
+// injection (CWE-88) when `iface` is passed to privileged tools (airmon-ng, airodump-ng, iw).
+inline bool isValidIfaceName(const std::string& iface) noexcept {
+    if (iface.empty() || iface.size() >= 16u) {
+        return false;
+    }
+    if (iface.front() == '-' || iface.front() == '.') {
+        return false;
+    }
+    for (unsigned char c : iface) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.';
+        if (!ok) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Strips ASCII control characters (< 0x20 or >= 0x7F, such as ANSI escape sequences \x1b,
+// \r, \n) from untrusted over-the-air strings before terminal or log output (CWE-150).
+inline std::string sanitizePrintableText(const std::string& raw, std::size_t maxLen = 64u) {
+    std::string out;
+    out.reserve(raw.size() < maxLen ? raw.size() : maxLen);
+    for (std::size_t i = 0; i < raw.size() && out.size() < maxLen; ++i) {
+        const unsigned char c = static_cast<unsigned char>(raw[i]);
+        if (c >= 0x20u && c <= 0x7Eu) {
+            out.push_back(static_cast<char>(c));
+        }
+    }
+    return out;
 }
 
 // An access point observed over the air or via an active scan.
@@ -281,12 +331,16 @@ using SecEvent = std::variant<
 
 // --- Immutable aggregate state -------------------------------------------------------
 
-// Tuning constants for the defensive monitors.
+// Tuning constants for the defensive monitors and bounded state collections.
 constexpr uint32_t kDeauthWindowMs = 10000u;   // sliding window for flood detection
 constexpr std::size_t kDeauthFloodThreshold = 8u;  // frames in window => flood
 constexpr uint32_t kAlertCooldownMs = 15000u;  // per-(kind,bssid) alert de-dupe window
 constexpr std::size_t kKarmaSsidThreshold = 6u;    // distinct SSIDs per BSSID => karma
 constexpr std::size_t kMaxAlerts = 200u;       // ring cap on retained alerts
+constexpr std::size_t kMaxTargets = 500u;      // ring cap; evicts least-recently-seen AP
+constexpr std::size_t kMaxDeauthTrackers = 256u;   // ring cap; evicts oldest BSSID tracker
+constexpr std::size_t kMaxBssidSsids = 256u;   // ring cap; evicts oldest BSSID-SSID set
+constexpr std::size_t kMaxSsidsPerBssid = 32u; // cap per-BSSID advertised SSIDs list
 constexpr std::size_t kMaxProbedSsidsPerStation = 16u;  // cap per-station probed-SSID list
 constexpr std::size_t kMaxStations = 500u;     // ring cap; evicts least-recently-seen station
 
@@ -328,6 +382,7 @@ struct SecState {
     uint32_t totalPmkids = 0;
     uint32_t blockedInjections = 0;
     uint32_t allowedInjections = 0;
+    uint32_t totalAlertsEmitted = 0;  // monotonic count even after alerts wrap kMaxAlerts
 };
 
 // --- Pure helpers (exposed for tests & shell convenience) ----------------------------
@@ -371,6 +426,7 @@ inline const Station* findStation(const SecState& s, const std::string& mac) {
 namespace detail {
 
 inline void pushAlert(SecState& s, Alert a) {
+    s.totalAlertsEmitted += 1u;
     s.alerts.push_back(std::move(a));
     if (s.alerts.size() > kMaxAlerts) {
         s.alerts.erase(s.alerts.begin(),
@@ -379,11 +435,54 @@ inline void pushAlert(SecState& s, Alert a) {
     }
 }
 
+// Upserts a target AP, evicting the least-recently-seen one first if at kMaxTargets.
+inline WifiTarget& targetFor(SecState& s, const std::string& bssid, bool* isNewOut = nullptr) {
+    for (WifiTarget& t : s.targets) {
+        if (t.bssid == bssid) {
+            if (isNewOut != nullptr) {
+                *isNewOut = false;
+            }
+            return t;
+        }
+    }
+    if (s.targets.size() >= kMaxTargets) {
+        std::size_t oldestIdx = 0u;
+        for (std::size_t i = 1u; i < s.targets.size(); ++i) {
+            if (s.targets[i].lastSeenMs < s.targets[oldestIdx].lastSeenMs) {
+                oldestIdx = i;
+            }
+        }
+        s.targets.erase(s.targets.begin() + static_cast<std::ptrdiff_t>(oldestIdx));
+    }
+    s.targets.push_back(WifiTarget{});
+    s.targets.back().bssid = bssid;
+    if (isNewOut != nullptr) {
+        *isNewOut = true;
+    }
+    return s.targets.back();
+}
+
 inline DeauthTracker& trackerFor(SecState& s, const std::string& bssid) {
     for (DeauthTracker& d : s.deauthTrackers) {
         if (d.bssid == bssid) {
             return d;
         }
+    }
+    if (s.deauthTrackers.size() >= kMaxDeauthTrackers) {
+        std::size_t oldestIdx = 0u;
+        uint32_t oldestMs = s.deauthTrackers[0].recentMs.empty()
+                                ? 0u
+                                : s.deauthTrackers[0].recentMs.back();
+        for (std::size_t i = 1u; i < s.deauthTrackers.size(); ++i) {
+            const uint32_t lastMs = s.deauthTrackers[i].recentMs.empty()
+                                        ? 0u
+                                        : s.deauthTrackers[i].recentMs.back();
+            if (lastMs < oldestMs) {
+                oldestMs = lastMs;
+                oldestIdx = i;
+            }
+        }
+        s.deauthTrackers.erase(s.deauthTrackers.begin() + static_cast<std::ptrdiff_t>(oldestIdx));
     }
     s.deauthTrackers.push_back(DeauthTracker{bssid, {}, 0u});
     return s.deauthTrackers.back();
@@ -395,14 +494,20 @@ inline BssidSsids& ssidsFor(SecState& s, const std::string& bssid) {
             return b;
         }
     }
+    if (s.bssidSsids.size() >= kMaxBssidSsids) {
+        s.bssidSsids.erase(s.bssidSsids.begin());
+    }
     s.bssidSsids.push_back(BssidSsids{bssid, {}, 0u});
     return s.bssidSsids.back();
 }
 
 // Upserts a station, evicting the least-recently-seen one first if at the ring cap.
-inline Station& stationFor(SecState& s, const std::string& mac) {
+inline Station& stationFor(SecState& s, const std::string& mac, bool* isNewOut = nullptr) {
     for (Station& st : s.stations) {
         if (st.mac == mac) {
+            if (isNewOut != nullptr) {
+                *isNewOut = false;
+            }
             return st;
         }
     }
@@ -417,6 +522,9 @@ inline Station& stationFor(SecState& s, const std::string& mac) {
     }
     s.stations.push_back(Station{});
     s.stations.back().mac = mac;
+    if (isNewOut != nullptr) {
+        *isNewOut = true;
+    }
     return s.stations.back();
 }
 
@@ -447,12 +555,10 @@ inline SecState reduce(const SecState& state, const SecEvent& event) {
                 if (bssid.empty()) {
                     return;
                 }
-                WifiTarget* t = findTarget(s, bssid);
-                const bool isNew = (t == nullptr);
+                bool isNew = false;
+                WifiTarget& targetRef = detail::targetFor(s, bssid, &isNew);
+                WifiTarget* t = &targetRef;
                 if (isNew) {
-                    s.targets.push_back(WifiTarget{});
-                    t = &s.targets.back();
-                    t->bssid = bssid;
                     t->firstSeenMs = ev.nowMs;
                 }
                 const std::string prevSsid = t->ssid;
@@ -490,7 +596,8 @@ inline SecState reduce(const SecState& state, const SecEvent& event) {
                 // Karma/mana: this BSSID advertising many distinct SSIDs.
                 if (!ev.ssid.empty()) {
                     BssidSsids& bs = detail::ssidsFor(s, bssid);
-                    if (std::find(bs.ssids.begin(), bs.ssids.end(), ev.ssid) == bs.ssids.end()) {
+                    if (std::find(bs.ssids.begin(), bs.ssids.end(), ev.ssid) == bs.ssids.end() &&
+                        bs.ssids.size() < kMaxSsidsPerBssid) {
                         bs.ssids.push_back(ev.ssid);
                     }
                     if (bs.ssids.size() >= kKarmaSsidThreshold &&
@@ -506,19 +613,25 @@ inline SecState reduce(const SecState& state, const SecEvent& event) {
 
             } else if constexpr (std::is_same_v<E, ClientObserved>) {
                 const std::string bssid = normalizeMac(ev.bssid);
+                const std::string client = normalizeMac(ev.client);
+                if (client.empty() || isBroadcastMac(client) || client == bssid) {
+                    return;
+                }
+                bool isNewStation = false;
+                Station& st = detail::stationFor(s, client, &isNewStation);
+                if (isNewStation) {
+                    st.firstSeenMs = ev.nowMs;
+                }
+                const bool newlyAssociated = (isNewStation || st.lastBssid != bssid);
+                st.lastBssid = bssid;
+                st.lastSeenMs = ev.nowMs;
+
                 WifiTarget* t = findTarget(s, bssid);
                 if (t != nullptr) {
-                    t->clientCount += 1u;
-                    t->lastSeenMs = ev.nowMs;
-                }
-                const std::string client = normalizeMac(ev.client);
-                if (!client.empty() && !isBroadcastMac(client)) {
-                    Station& st = detail::stationFor(s, client);
-                    if (st.firstSeenMs == 0u) {
-                        st.firstSeenMs = ev.nowMs;
+                    if (newlyAssociated) {
+                        t->clientCount += 1u;
                     }
-                    st.lastBssid = bssid;
-                    st.lastSeenMs = ev.nowMs;
+                    t->lastSeenMs = ev.nowMs;
                 }
 
             } else if constexpr (std::is_same_v<E, ProbeRequestObserved>) {
@@ -526,8 +639,9 @@ inline SecState reduce(const SecState& state, const SecEvent& event) {
                 if (client.empty() || isBroadcastMac(client)) {
                     return;
                 }
-                Station& st = detail::stationFor(s, client);
-                if (st.firstSeenMs == 0u) {
+                bool isNewStation = false;
+                Station& st = detail::stationFor(s, client, &isNewStation);
+                if (isNewStation) {
                     st.firstSeenMs = ev.nowMs;
                 }
                 st.lastSeenMs = ev.nowMs;
@@ -554,15 +668,17 @@ inline SecState reduce(const SecState& state, const SecEvent& event) {
                     t->lastSeenMs = ev.nowMs;
                 }
                 DeauthTracker& dt = detail::trackerFor(s, bssid);
-                // Drop timestamps outside the sliding window.
+                // Drop timestamps outside the sliding window (guard against clock skew).
                 dt.recentMs.erase(
-                    std::remove_if(dt.recentMs.begin(), dt.recentMs.end(),
-                                   [&](uint32_t t) { return ev.nowMs - t > kDeauthWindowMs; }),
+                    std::remove_if(dt.recentMs.begin(), dt.recentMs.end(), [&](uint32_t t) {
+                        return ev.nowMs >= t && (ev.nowMs - t > kDeauthWindowMs);
+                    }),
                     dt.recentMs.end());
                 dt.recentMs.push_back(ev.nowMs);
                 if (dt.recentMs.size() >= kDeauthFloodThreshold &&
                     (dt.lastFloodAlertMs == 0u ||
-                     ev.nowMs - dt.lastFloodAlertMs >= kAlertCooldownMs)) {
+                     (ev.nowMs >= dt.lastFloodAlertMs &&
+                      ev.nowMs - dt.lastFloodAlertMs >= kAlertCooldownMs))) {
                     dt.lastFloodAlertMs = ev.nowMs;
                     const WifiTarget* t = findTarget(s, bssid);
                     detail::pushAlert(
@@ -575,38 +691,40 @@ inline SecState reduce(const SecState& state, const SecEvent& event) {
 
             } else if constexpr (std::is_same_v<E, HandshakeObserved>) {
                 const std::string bssid = normalizeMac(ev.bssid);
-                WifiTarget* t = findTarget(s, bssid);
-                const bool wasNew = (t == nullptr) || !t->handshake;
-                if (t == nullptr) {
-                    s.targets.push_back(WifiTarget{});
-                    t = &s.targets.back();
-                    t->bssid = bssid;
-                    t->firstSeenMs = ev.nowMs;
+                if (bssid.empty()) {
+                    return;
                 }
-                t->handshake = true;
-                t->lastSeenMs = ev.nowMs;
+                bool isNewTarget = false;
+                WifiTarget& t = detail::targetFor(s, bssid, &isNewTarget);
+                if (isNewTarget) {
+                    t.firstSeenMs = ev.nowMs;
+                }
+                const bool wasNew = isNewTarget || !t.handshake;
+                t.handshake = true;
+                t.lastSeenMs = ev.nowMs;
                 if (wasNew) {
                     s.totalHandshakes += 1u;
                     detail::pushAlert(s, Alert{ev.nowMs, Severity::Info, AlertKind::HandshakeCaptured,
-                                               bssid, t->ssid, "WPA handshake captured"});
+                                               bssid, t.ssid, "WPA handshake captured"});
                 }
 
             } else if constexpr (std::is_same_v<E, PmkidObserved>) {
                 const std::string bssid = normalizeMac(ev.bssid);
-                WifiTarget* t = findTarget(s, bssid);
-                const bool wasNew = (t == nullptr) || !t->pmkid;
-                if (t == nullptr) {
-                    s.targets.push_back(WifiTarget{});
-                    t = &s.targets.back();
-                    t->bssid = bssid;
-                    t->firstSeenMs = ev.nowMs;
+                if (bssid.empty()) {
+                    return;
                 }
-                t->pmkid = true;
-                t->lastSeenMs = ev.nowMs;
+                bool isNewTarget = false;
+                WifiTarget& t = detail::targetFor(s, bssid, &isNewTarget);
+                if (isNewTarget) {
+                    t.firstSeenMs = ev.nowMs;
+                }
+                const bool wasNew = isNewTarget || !t.pmkid;
+                t.pmkid = true;
+                t.lastSeenMs = ev.nowMs;
                 if (wasNew) {
                     s.totalPmkids += 1u;
                     detail::pushAlert(s, Alert{ev.nowMs, Severity::Info, AlertKind::PmkidCaptured,
-                                               bssid, t->ssid, "PMKID captured"});
+                                               bssid, t.ssid, "PMKID captured"});
                 }
 
             } else if constexpr (std::is_same_v<E, InjectionAttempt>) {
@@ -711,6 +829,29 @@ inline std::vector<Station> stationsByActivity(const SecState& s) {
     return out;
 }
 
+// Pure check: true if any SSID in `st.probedSsids` matches a common default router or
+// open public-hotspot pattern (making the client susceptible to rogue-AP / Karma attacks).
+inline bool hasWeakOrDefaultProbe(const Station& st) {
+    constexpr const char* kPatterns[] = {
+        "linksys", "netgear", "dlink", "d-link", "default", "tp-link", "asus",
+        "xfinitywifi", "attwifi", "starbucks", "guest", "freewifi", "free_wifi",
+        "free wifi", "airport", "hotel"
+    };
+    for (const std::string& ssid : st.probedSsids) {
+        std::string lower;
+        lower.reserve(ssid.size());
+        for (unsigned char c : ssid) {
+            lower.push_back(static_cast<char>(std::tolower(c)));
+        }
+        for (const char* pat : kPatterns) {
+            if (lower.find(pat) != std::string::npos) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // --- Ambient "pet mood" signal from defensive alerts ---------------------------------
 //
 // The portable Mood enum (domain.hpp/pet_logic.hpp) is shared by every platform, including
@@ -737,7 +878,7 @@ inline const char* secMoodLabel(SecMood m) {
 inline SecMood deriveSecMood(const SecState& s, uint32_t nowMs, uint32_t recentMs = 30000u) {
     bool anyWarn = false;
     for (auto it = s.alerts.rbegin(); it != s.alerts.rend(); ++it) {
-        if (nowMs - it->nowMs > recentMs) {
+        if (it->nowMs <= nowMs && (nowMs - it->nowMs) > recentMs) {
             break;
         }
         if (it->severity == Severity::Critical) {
@@ -831,20 +972,55 @@ inline std::string joinRecordFields(const std::vector<std::string>& fields) {
     return out;
 }
 
+// Exception-free integer parsers so core/ stays compatible with -fno-exceptions builds.
 inline uint32_t parseU32(const std::string& s) {
-    try {
-        return static_cast<uint32_t>(std::stoul(s));
-    } catch (...) {
+    std::size_t i = 0u;
+    while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) {
+        ++i;
+    }
+    if (i >= s.size() || !std::isdigit(static_cast<unsigned char>(s[i]))) {
         return 0u;
     }
+    uint64_t val = 0u;
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+        val = val * 10u + static_cast<uint64_t>(s[i] - '0');
+        if (val > 0xFFFFFFFFull) {
+            return 0u;
+        }
+        ++i;
+    }
+    return static_cast<uint32_t>(val);
 }
 
 inline int32_t parseI32(const std::string& s) {
-    try {
-        return static_cast<int32_t>(std::stol(s));
-    } catch (...) {
+    std::size_t i = 0u;
+    while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) {
+        ++i;
+    }
+    if (i >= s.size()) {
         return 0;
     }
+    bool neg = false;
+    if (s[i] == '-') {
+        neg = true;
+        ++i;
+    } else if (s[i] == '+') {
+        ++i;
+    }
+    if (i >= s.size() || !std::isdigit(static_cast<unsigned char>(s[i]))) {
+        return 0;
+    }
+    const uint64_t limit = neg ? 2147483648ull : 2147483647ull;
+    uint64_t val = 0u;
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+        val = val * 10u + static_cast<uint64_t>(s[i] - '0');
+        if (val > limit) {
+            return 0;
+        }
+        ++i;
+    }
+    return neg ? static_cast<int32_t>(-static_cast<int64_t>(val))
+               : static_cast<int32_t>(val);
 }
 
 }  // namespace detail
@@ -899,8 +1075,12 @@ inline std::optional<SecEvent> decodeSecEvent(const std::string& line) {
     using detail::parseU32;
 
     if (tag == "AP" && f.size() == 8u) {
+        const int32_t encRaw = parseI32(f[6]);
+        if (encRaw < 0 || encRaw > static_cast<int32_t>(Encryption::Wpa3)) {
+            return std::nullopt;
+        }
         return SecEvent{ApObserved{parseU32(f[1]), f[2], f[3], parseI32(f[4]), parseI32(f[5]),
-                                   static_cast<Encryption>(parseI32(f[6])), f[7] == "1"}};
+                                   static_cast<Encryption>(encRaw), f[7] == "1"}};
     }
     if (tag == "CLIENT" && f.size() == 4u) {
         return SecEvent{ClientObserved{parseU32(f[1]), f[2], f[3]}};
@@ -921,8 +1101,12 @@ inline std::optional<SecEvent> decodeSecEvent(const std::string& line) {
         return SecEvent{ProbeRequestObserved{parseU32(f[1]), f[2], f[3]}};
     }
     if (tag == "INJECT" && f.size() == 6u) {
+        const int32_t decRaw = parseI32(f[5]);
+        if (decRaw < 0 || decRaw > static_cast<int32_t>(AuthDecision::BlockedNotAllowlisted)) {
+            return std::nullopt;
+        }
         return SecEvent{InjectionAttempt{parseU32(f[1]), f[2], f[3], parseU32(f[4]),
-                                         static_cast<AuthDecision>(parseI32(f[5]))}};
+                                         static_cast<AuthDecision>(decRaw)}};
     }
     return std::nullopt;
 }

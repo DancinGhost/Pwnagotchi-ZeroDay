@@ -40,7 +40,7 @@ $(BUILD)/zd_sim: platforms/native/main.cpp core/include/zd/*.hpp render/include/
 
 # Linux desktop CLI/TUI (hybrid backend; native libpcap capture/injection + CLI fallback).
 # The Qt6 GUI (zd-gui) is built via CMake: cmake -B build_cmake && cmake --build build_cmake
-$(BUILD)/zd-linux: platforms/linux/cli/main.cpp core/include/zd/*.hpp platforms/linux/**/*.hpp | $(BUILD)
+$(BUILD)/zd-linux: platforms/linux/cli/main.cpp core/include/zd/*.hpp platforms/linux/backend/*.hpp platforms/linux/app/*.hpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) $(if $(filter 1,$(HAVE_PCAP)),-DZD_WITH_LIBPCAP) $(LINUX_INCLUDES) $(PCAP_CFLAGS) \
 		platforms/linux/cli/main.cpp -lncurses -lpthread $(PCAP_LIBS) -o $@
 

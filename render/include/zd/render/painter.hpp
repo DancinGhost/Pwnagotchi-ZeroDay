@@ -43,7 +43,8 @@ void drawSingleEye(Gfx& gfx,
                    int16_t r,
                    zd::EyeGlyph style,
                    const zd::ColorPalette& pal,
-                   bool compact) {
+                   bool compact,
+                   bool isRightEye = false) {
     const int16_t stroke = compact ? 2 : 3;
 
     switch (style) {
@@ -85,8 +86,12 @@ void drawSingleEye(Gfx& gfx,
         case zd::EyeGlyph::SadDroop: {
             gfx.fillCircle(cx, cy, r - 1, pal.fg);
             gfx.fillCircle(cx, cy - 1, (std::max)(1, r / 3), pal.bg);
-            // Slanted sad eyebrow
-            gfx.drawLine(cx - r, cy - r - 1, cx + r, cy - r - 3, pal.fg);
+            // Slanted sad eyebrow (mirrored across left/right eyes)
+            if (!isRightEye) {
+                gfx.drawLine(cx - r, cy - r - 1, cx + r, cy - r - 3, pal.fg);
+            } else {
+                gfx.drawLine(cx - r, cy - r - 3, cx + r, cy - r - 1, pal.fg);
+            }
             break;
         }
         case zd::EyeGlyph::HalfLid: {
@@ -104,7 +109,8 @@ void drawSingleEye(Gfx& gfx,
 
 template <typename Gfx>
 void drawMouth(Gfx& gfx, const zd::FaceGeometry& g, zd::MouthGlyph mouth, const zd::ColorPalette& pal, bool compact) {
-    const int16_t stroke = compact ? 2 : 2;
+    (void)compact;
+    const int16_t stroke = 2;
     const int16_t r = g.mouthRadius;
 
     switch (mouth) {
@@ -146,8 +152,8 @@ void drawPwnagotchiFace(Gfx& gfx, const zd::UiFrame& frame) {
     const int16_t leftEyeX = static_cast<int16_t>(g.centerX - g.eyeOffsetX);
     const int16_t rightEyeX = static_cast<int16_t>(g.centerX + g.eyeOffsetX);
 
-    drawSingleEye(gfx, leftEyeX, g.eyeY, g.eyeRadius, f.eyes, pal, frame.compact);
-    drawSingleEye(gfx, rightEyeX, g.eyeY, g.eyeRadius, f.eyes, pal, frame.compact);
+    drawSingleEye(gfx, leftEyeX, g.eyeY, g.eyeRadius, f.eyes, pal, frame.compact, false);
+    drawSingleEye(gfx, rightEyeX, g.eyeY, g.eyeRadius, f.eyes, pal, frame.compact, true);
 
     // Connect sunglasses bridge and temple arm
     if (f.eyes == zd::EyeGlyph::Sunglasses) {

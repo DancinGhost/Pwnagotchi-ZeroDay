@@ -75,6 +75,24 @@
             ]
         },
         {
+            "label": "CMake: Build & Test Linux + Core (zd-linux, zd-gui, zd_sim)",
+            "type": "shell",
+            "command": "cmake -B build_cmake && cmake --build build_cmake -j && ctest --test-dir build_cmake --output-on-failure",
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "PlatformIO: Build (LILYGO T-Deck Plus)",
+            "type": "shell",
+            "command": "pio run -e t-deck-plus",
+            "group": "build",
+            "problemMatcher": [
+                "$platformio"
+            ]
+        },
+        {
             "label": "PlatformIO: Serial Monitor",
             "type": "shell",
             "command": "pio device monitor -b 115200",

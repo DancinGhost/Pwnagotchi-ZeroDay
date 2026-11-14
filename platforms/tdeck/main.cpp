@@ -16,12 +16,11 @@
 
 #include "zd/hal.hpp"
 #include "zd/render/painter.hpp"
+#include "esp32_hal.hpp"
 
 #include <Arduino.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
-#include <Preferences.h>
-#include <WiFi.h>
 #include <Wire.h>
 #include <algorithm>
 #include <cstring>
@@ -29,6 +28,9 @@
 #include <string_view>
 
 namespace {
+
+using zd::esp32_common::Esp32WifiScanner;
+using zd::esp32_common::NvsThemeStore;
 
 // --- Pinout & Hardware Constants for LILYGO T-Deck / T-Deck Plus ---
 
@@ -144,44 +146,6 @@ public:
 
 // --- Thin Hardware Adapters Implementing `zd::hal` Contracts ---
 
-class Esp32WifiScanner final : public zd::hal::IRadioScanner {
-public:
-    void init() {
-        WiFi.mode(WIFI_STA);
-        WiFi.disconnect(true, true);
-    }
-
-    bool startAsyncScan() override {
-        const int16_t rc = WiFi.scanNetworks(/*async=*/true, /*show_hidden=*/true);
-        return (rc == WIFI_SCAN_RUNNING || rc >= 0);
-    }
-
-    zd::hal::ScanPollResult pollScan() override {
-        const int16_t status = WiFi.scanComplete();
-        if (status == WIFI_SCAN_RUNNING) {
-            return {zd::hal::ScanPollState::Running, {}};
-        }
-        if (status < 0) {
-            return {zd::hal::ScanPollState::Failed, {}};
-        }
-        std::vector<zd::AccessPoint> networks;
-        networks.reserve(static_cast<std::size_t>(status));
-        for (int16_t i = 0; i < status; ++i) {
-            networks.push_back(zd::AccessPoint{
-                std::string(WiFi.SSID(i).c_str()),
-                static_cast<int32_t>(WiFi.RSSI(i)),
-                static_cast<int32_t>(WiFi.channel(i)),
-                WiFi.encryptionType(i) != WIFI_AUTH_OPEN
-            });
-        }
-        return {zd::hal::ScanPollState::Completed, std::move(networks)};
-    }
-
-    void clearScan() override {
-        WiFi.scanDelete();
-    }
-};
-
 class TDeckPowerSensor final : public zd::hal::IPowerSensor {
 public:
     void init() {
@@ -213,32 +177,6 @@ public:
         const bool charging = (batMv > 4250);
         return zd::hal::PowerStatus{pct, charging};
     }
-};
-
-class NvsThemeStore final : public zd::hal::IThemeStore {
-public:
-    void init() {
-        ready_ = prefs_.begin("zeroday", /*readOnly=*/false);
-    }
-
-    std::string loadThemeKey() override {
-        if (!ready_) {
-            return {};
-        }
-        return std::string(prefs_.getString("theme", "").c_str());
-    }
-
-    void saveThemeKey(std::string_view key) override {
-        if (!ready_) {
-            return;
-        }
-        const std::string owned(key);
-        prefs_.putString("theme", owned.c_str());
-    }
-
-private:
-    Preferences prefs_;
-    bool ready_ = false;
 };
 
 class TDeckDisplaySink final : public zd::hal::IDisplaySink {
@@ -502,68 +440,77 @@ void pollTrackball(uint32_t nowMs) {
     }
 }
 
+uint32_t gLastKbPollMs = 0;
+
 void initKeyboard() {
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
     pinMode(PIN_KB_INT, INPUT_PULLUP);
 }
 
 void pollKeyboard(uint32_t nowMs) {
-    if (digitalRead(PIN_KB_INT) == LOW) {
-        Wire.requestFrom(static_cast<uint8_t>(KB_I2C_ADDR), static_cast<uint8_t>(1));
-        if (Wire.available() > 0) {
-            const char c = static_cast<char>(Wire.read());
-            if (c == 0) {
-                return;
-            }
+    // Stock LILYGO T-Deck ESP32-C3 keyboard firmware requires periodic I2C polling (returns
+    // 0x00 when idle) and does not always assert PIN_KB_INT; custom C3 firmware asserts
+    // PIN_KB_INT LOW. Supporting both ensures keys work across all T-Deck board revisions.
+    const bool intLow = (digitalRead(PIN_KB_INT) == LOW);
+    if (!intLow && (nowMs - gLastKbPollMs) < 40u) {
+        return;
+    }
+    gLastKbPollMs = nowMs;
 
-            if (c == '\r' || c == '\n') {
-                if (gKeyboardLine.empty()) {
-                    // Empty Enter key: quick shortcut triggers a WiFi scan
-                    gSession.dispatch(zd::ButtonBPressedEvent{nowMs}, &gThemeStore);
-                    logSerialStatus("KB_SCAN");
-                } else {
-                    if (gKeyboardLine == "gps") {
-                        if (gGps.hasFix) {
-                            Serial.printf("[GPS] FIX OK | Lat: %.5f Lon: %.5f | Sats: %u | Time: %s UTC\n",
-                                          gGps.latitude, gGps.longitude, gGps.satellites, gGps.utcTime);
-                        } else {
-                            Serial.println("[GPS] Searching for satellites (no fix yet)...");
-                        }
+    Wire.requestFrom(static_cast<uint8_t>(KB_I2C_ADDR), static_cast<uint8_t>(1));
+    if (Wire.available() > 0) {
+        const char c = static_cast<char>(Wire.read());
+        if (c == 0) {
+            return;
+        }
+
+        if (c == '\r' || c == '\n') {
+            if (gKeyboardLine.empty()) {
+                // Empty Enter key: quick shortcut triggers a WiFi scan
+                gSession.dispatch(zd::ButtonBPressedEvent{nowMs}, &gThemeStore);
+                logSerialStatus("KB_SCAN");
+            } else {
+                if (gKeyboardLine == "gps") {
+                    if (gGps.hasFix) {
+                        Serial.printf("[GPS] FIX OK | Lat: %.5f Lon: %.5f | Sats: %u | Time: %s UTC\n",
+                                      gGps.latitude, gGps.longitude, gGps.satellites, gGps.utcTime);
                     } else {
-                        const zd::hal::CliOutcome res = zd::hal::interpretCliLine(
-                            gKeyboardLine, gSession.state(), gDisplay.dimensions(), nowMs);
-                        if (!res.output.empty()) {
-                            Serial.print(res.output.c_str());
-                        }
-                        if (res.event.has_value()) {
-                            gSession.dispatch(*res.event, &gThemeStore);
-                            logSerialStatus("KB_CLI");
-                        }
+                        Serial.println("[GPS] Searching for satellites (no fix yet)...");
                     }
-                    gKeyboardLine.clear();
+                } else {
+                    const zd::hal::CliOutcome res = zd::hal::interpretCliLine(
+                        gKeyboardLine, gSession.state(), gDisplay.dimensions(), nowMs);
+                    if (!res.output.empty()) {
+                        Serial.print(res.output.c_str());
+                    }
+                    if (res.event.has_value()) {
+                        gSession.dispatch(*res.event, &gThemeStore);
+                        logSerialStatus("KB_CLI");
+                    }
                 }
-            } else if (c == 0x08 || c == 127) { // Backspace
-                if (!gKeyboardLine.empty()) {
-                    gKeyboardLine.pop_back();
-                }
-            } else if (c == 0x1B) { // Escape
                 gKeyboardLine.clear();
-            } else if (gKeyboardLine.empty() && (c == ' ' || c == '\t')) {
-                // Immediate hotkey: Space or Tab cycles screen view
-                gSession.dispatch(zd::CyclePageEvent{nowMs, +1}, &gThemeStore);
-                logSerialStatus("KB_VIEW");
-            } else if (gKeyboardLine.empty() && c == '1') {
-                gSession.dispatch(zd::SetPageEvent{nowMs, zd::ScreenPage::PetFace}, &gThemeStore);
-                logSerialStatus("KB_PAGE_FACE");
-            } else if (gKeyboardLine.empty() && c == '2') {
-                gSession.dispatch(zd::SetPageEvent{nowMs, zd::ScreenPage::NearbyRadar}, &gThemeStore);
-                logSerialStatus("KB_PAGE_RADAR");
-            } else if (gKeyboardLine.empty() && c == '3') {
-                gSession.dispatch(zd::SetPageEvent{nowMs, zd::ScreenPage::ChannelSpectrum}, &gThemeStore);
-                logSerialStatus("KB_PAGE_SPECTRUM");
-            } else if (gKeyboardLine.size() < 64u && c >= 32 && c <= 126) {
-                gKeyboardLine.push_back(c);
             }
+        } else if (c == 0x08 || c == 127) { // Backspace
+            if (!gKeyboardLine.empty()) {
+                gKeyboardLine.pop_back();
+            }
+        } else if (c == 0x1B) { // Escape
+            gKeyboardLine.clear();
+        } else if (gKeyboardLine.empty() && (c == ' ' || c == '\t')) {
+            // Immediate hotkey: Space or Tab cycles screen view
+            gSession.dispatch(zd::CyclePageEvent{nowMs, +1}, &gThemeStore);
+            logSerialStatus("KB_VIEW");
+        } else if (gKeyboardLine.empty() && c == '1') {
+            gSession.dispatch(zd::SetPageEvent{nowMs, zd::ScreenPage::PetFace}, &gThemeStore);
+            logSerialStatus("KB_PAGE_FACE");
+        } else if (gKeyboardLine.empty() && c == '2') {
+            gSession.dispatch(zd::SetPageEvent{nowMs, zd::ScreenPage::NearbyRadar}, &gThemeStore);
+            logSerialStatus("KB_PAGE_RADAR");
+        } else if (gKeyboardLine.empty() && c == '3') {
+            gSession.dispatch(zd::SetPageEvent{nowMs, zd::ScreenPage::ChannelSpectrum}, &gThemeStore);
+            logSerialStatus("KB_PAGE_SPECTRUM");
+        } else if (gKeyboardLine.size() < 64u && c >= 32 && c <= 126) {
+            gKeyboardLine.push_back(c);
         }
     }
 }

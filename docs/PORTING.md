@@ -15,17 +15,22 @@ pwnagotchi-zeroday/
 │   ├── wifi_analysis.hpp         # Pure SSID sanitization, mesh deduplication & histograms
 │   ├── pet_logic.hpp             # Pure reducer: reduce(AppState, AppEvent) -> AppState
 │   ├── ui_model.hpp              # Multi-device responsive layout (128x64 up to 320x240+)
-│   └── hal.hpp                   # Portable HAL contracts, CLI parser & PlatformSession
+│   ├── hal.hpp                   # Portable HAL contracts, CLI parser & PlatformSession
+│   ├── secops.hpp                # Pure security-operations reducer, auth gate & wire replay
+│   └── secops_hal.hpp            # Security backend contracts (monitor, capture, TX, audit)
 ├── render/include/zd/render/     # Layer 2: Hardware-Agnostic Pixel/Vector Renderer
 │   ├── painter.hpp               # Templated paintUiFrame<Gfx> for M5GFX, LovyanGFX, etc.
 │   └── surface_rgb565.hpp        # Zero-dep software RGB565 surface + 5x7 font + 1-bit export
 ├── platforms/                    # Layer 3: Imperative Hardware & OS Shells
 │   ├── m5stick/main.cpp          # ESP32 + M5Unified + WiFi + NVS Preferences + Serial CLI
 │   ├── tdeck/main.cpp            # ESP32-S3 + LovyanGFX + Trackball + Touch + Keyboard + GPS
+│   ├── linux/                    # Desktop Linux CLI/ncurses TUI (`zd-linux`) + Qt6 GUI (`zd-gui`)
 │   ├── native/main.cpp           # Linux / macOS / Windows / RPi terminal simulator & PPM exporter
 │   └── web/                      # Standalone HTML5 Canvas + JS functional core port
 └── tests/                        # Automated Host & Cross-Language Parity Tests
     ├── core/test_functional_core.cpp
+    ├── core/test_secops.cpp
+    ├── core/test_linux_parsers.cpp
     └── render/test_painter.cpp
 ```
 

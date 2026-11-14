@@ -248,7 +248,9 @@
     // Active View Segment Buttons
     const pageBtns = document.querySelectorAll('[data-page]');
     pageBtns.forEach(function (btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-page') === gState.page);
+      const isSelected = btn.getAttribute('data-page') === gState.page;
+      btn.classList.toggle('active', isSelected);
+      btn.setAttribute('aria-selected', String(isSelected));
     });
 
     // Active Theme Swatches & Theme Cycler Label
@@ -261,13 +263,17 @@
     }
     const swatches = document.querySelectorAll('[data-theme]');
     swatches.forEach(function (sw) {
-      sw.classList.toggle('active', sw.getAttribute('data-theme') === gState.theme);
+      const isPressed = sw.getAttribute('data-theme') === gState.theme;
+      sw.classList.toggle('active', isPressed);
+      sw.setAttribute('aria-pressed', String(isPressed));
     });
 
     // Active Environment Cards
     const envCards = document.querySelectorAll('[data-env]');
     envCards.forEach(function (card) {
-      card.classList.toggle('active', card.getAttribute('data-env') === activeEnv);
+      const isPressed = card.getAttribute('data-env') === activeEnv;
+      card.classList.toggle('active', isPressed);
+      card.setAttribute('aria-pressed', String(isPressed));
     });
   }
 
@@ -514,6 +520,7 @@
       triggerButtonBShort();
     }
   });
+  window.addEventListener('pointercancel', clearBtnBHold);
 
   // --- Direct LCD Screen Touch / Boop ---
   elViewport.addEventListener('click', function (ev) {
@@ -570,6 +577,7 @@
     const on = buzzer.toggle();
     elBtnSfx.textContent = on ? 'SFX: ON' : 'SFX: OFF';
     elBtnSfx.classList.toggle('active', on);
+    elBtnSfx.setAttribute('aria-pressed', String(on));
   });
 
   elBtnSnapPng.addEventListener('click', function () {
@@ -619,8 +627,10 @@
     themes.THEME_CATALOG.forEach(function (spec, idx) {
       const sw = document.createElement('button');
       sw.type = 'button';
-      sw.className = 'theme-swatch' + (spec.id === gState.theme ? ' active' : '');
+      const isInitialActive = spec.id === gState.theme;
+      sw.className = 'theme-swatch' + (isInitialActive ? ' active' : '');
       sw.setAttribute('data-theme', spec.id);
+      sw.setAttribute('aria-pressed', String(isInitialActive));
       sw.style.background =
         'linear-gradient(135deg, ' +
         spec.palette.bg.hex +
@@ -1020,7 +1030,7 @@
   logSerialStatus('BOOT');
   appendLog(
     'WEB_TOY',
-    'Welcome to pwnagotchi-zeroday Web! Click [M5], press [B] to scan, or type "help" below.',
+    'Welcome to pwnagotchi-zeroday Web! Click [A], press [B] to scan, or type "help" below.',
     'log-cmd'
   );
   renderCurrentState();

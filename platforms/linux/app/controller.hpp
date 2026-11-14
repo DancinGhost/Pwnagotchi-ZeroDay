@@ -47,7 +47,8 @@ struct AsyncActionOutcome {
 
 class AppController {
 public:
-    explicit AppController(std::string iface = "wlan0") : iface_(std::move(iface)) {}
+    explicit AppController(std::string iface = "wlan0")
+        : iface_(sec::isValidIfaceName(iface) ? std::move(iface) : std::string("wlan0")) {}
 
     void boot(uint32_t seed = 0xC0FFEEu) {
         pet_.boot(seed, nowMs(), &themeStore_);
@@ -152,6 +153,9 @@ public:
         if (!client.empty() && !sec::isValidMac(client)) {
             return {false, "invalid client MAC '" + client + "'"};
         }
+        if (count < 1u || count > 1000u) {
+            return {false, "invalid deauth frame count (must be 1..1000)"};
+        }
         if (actionJob_.running()) {
             return {false, "an action is already in progress"};
         }
@@ -189,10 +193,65 @@ public:
     // --- Pet UI event passthrough ---
     void dispatchPet(const AppEvent& ev) { pet_.dispatch(ev, &themeStore_); }
 
+    // --- Session record & replay ---
+    ActionResult startRecording(const std::string& path) {
+        if (path.empty()) {
+            recorder_.close();
+            sec_.setRecorder(nullptr);
+            return {true, "recording stopped"};
+        }
+        if (!recorder_.open(path)) {
+            return {false, "failed to open session record file: " + path};
+        }
+        sec_.setRecorder(&recorder_);
+        return {true, "recording events to " + path};
+    }
+
+    ActionResult saveSession(const std::string& path) const {
+        if (path.empty()) {
+            return {false, "missing file path"};
+        }
+        if (!linux_backend::saveEventsToFile(path, sec_.events())) {
+            return {false, "failed to write session to " + path};
+        }
+        return {true, "saved " + std::to_string(sec_.events().size()) + " event(s) to " + path};
+    }
+
+    ActionResult loadSession(const std::string& path) {
+        if (path.empty()) {
+            return {false, "missing file path"};
+        }
+        const auto decoded = linux_backend::loadEventsFromFile(path);
+        if (!decoded.has_value()) {
+            return {false, "failed to read session file: " + path};
+        }
+        sec_.loadEvents(*decoded);
+        // Also populate the pet UI with the replayed networks so the Pet Face / Radar /
+        // Spectrum views immediately reflect the loaded airspace.
+        std::vector<AccessPoint> aps;
+        aps.reserve(sec_.state().targets.size());
+        for (const sec::WifiTarget& t : sec_.state().targets) {
+            aps.push_back(AccessPoint{
+                t.ssid,
+                t.rssi,
+                t.channel,
+                t.enc != sec::Encryption::Open && t.enc != sec::Encryption::Unknown
+            });
+        }
+        pet_.dispatch(ScanCompletedEvent{nowMs(), std::move(aps)}, &themeStore_);
+        return {true, "replayed " + std::to_string(decoded->size()) + " event(s) from " + path +
+                          " (" + std::to_string(sec_.state().targets.size()) + " APs, " +
+                          std::to_string(sec_.state().stations.size()) + " stations)"};
+    }
+
+    bool recording() const { return recorder_.active(); }
+    const std::string& recordingPath() const { return recorder_.path(); }
+
     // --- Read-only views for the UIs ---
     UiFrame petFrame(ScreenDimensions dims) const { return pet_.buildFrame(dims); }
     const AppState& petState() const { return pet_.state(); }
     const sec::SecState& secState() const { return sec_.state(); }
+    sec::SecMood secMood() const { return sec::deriveSecMood(sec_.state(), nowMs()); }
     const std::vector<linux_backend::ScannedAp>& lastScan() const { return scanner_.detailed(); }
 
     bool monitoring() const { return monitoring_; }
@@ -270,6 +329,7 @@ private:
     linux_backend::SysfsPowerSensor power_;
     linux_backend::FileThemeStore themeStore_;
     linux_backend::FileAuditLog audit_;
+    linux_backend::FileSessionRecorder recorder_;
     std::unique_ptr<sec::ICaptureSource> capture_;
     std::unique_ptr<sec::IInjector> injector_;
     CaptureEngine engine_ = CaptureEngine::None;

@@ -42,7 +42,7 @@
           <option value="clean">FX: Crisp Raw</option>
         </select>
 
-        <button id="btn-sfx" class="tool-chip" type="button" title="Toggle M5Stick Piezo Buzzer Chirps">
+        <button id="btn-sfx" class="tool-chip" type="button" aria-pressed="false" title="Toggle M5Stick Piezo Buzzer Chirps">
           SFX: OFF
         </button>
 
@@ -97,7 +97,7 @@
               </div>
             </div>
 
-            <!-- Right Deck: Tactile Front M5 Button (Button A) -->
+            <!-- Right Deck: Tactile Front Button (Button A) -->
             <div class="m5-right-deck">
               <button
                 id="hw-btn-a"
@@ -105,7 +105,7 @@
                 type="button"
                 title="Button A: Cycle Views (Pet Face -> Radar -> Spectrum) & Wake Pet"
               >
-                <span class="m5-mark">M5</span>
+                <span class="m5-mark">ZD</span>
                 <span class="m5-sub">[A] VIEW</span>
               </button>
               <div class="chassis-vent" aria-hidden="true">
@@ -117,9 +117,9 @@
           <!-- Quick Screen Views & Theme Cycle Dock -->
           <div class="stage-dock">
             <div class="seg-group" role="tablist" aria-label="Display Page">
-              <button class="seg-btn active" data-page="PetFace" type="button">Pet Face</button>
-              <button class="seg-btn" data-page="NearbyRadar" type="button">WiFi Radar</button>
-              <button class="seg-btn" data-page="ChannelSpectrum" type="button">Ch Spectrum</button>
+              <button class="seg-btn active" role="tab" aria-selected="true" data-page="PetFace" type="button">Pet Face</button>
+              <button class="seg-btn" role="tab" aria-selected="false" data-page="NearbyRadar" type="button">WiFi Radar</button>
+              <button class="seg-btn" role="tab" aria-selected="false" data-page="ChannelSpectrum" type="button">Ch Spectrum</button>
             </div>
 
             <div class="theme-cycler" aria-label="Cycle Themes">
@@ -236,27 +236,27 @@
           </div>
 
           <div id="env-grid" class="env-grid">
-            <button class="env-card active" data-env="cafe" type="button">
+            <button class="env-card active" aria-pressed="true" data-env="cafe" type="button">
               <div class="env-name">Cyber Cafe</div>
               <div class="env-desc">5-8 cozy APs</div>
             </button>
-            <button class="env-card" data-env="con" type="button">
-              <div class="env-name">DEF CON Floor</div>
+            <button class="env-card" aria-pressed="false" data-env="con" type="button">
+              <div class="env-name">SecCon Floor</div>
               <div class="env-desc">14+ wild APs</div>
             </button>
-            <button class="env-card" data-env="lab" type="button">
+            <button class="env-card" aria-pressed="false" data-env="lab" type="button">
               <div class="env-name">ZeroDay Lab</div>
               <div class="env-desc">-41dBm bench</div>
             </button>
-            <button class="env-card" data-env="roam" type="button">
+            <button class="env-card" aria-pressed="false" data-env="roam" type="button">
               <div class="env-name">Auto-Wardrive</div>
               <div class="env-desc">Roams areas</div>
             </button>
-            <button class="env-card" data-env="quiet" type="button">
+            <button class="env-card" aria-pressed="false" data-env="quiet" type="button">
               <div class="env-name">Night Suburb</div>
               <div class="env-desc">1-2 faint APs</div>
             </button>
-            <button class="env-card" data-env="bunker" type="button">
+            <button class="env-card" aria-pressed="false" data-env="bunker" type="button">
               <div class="env-name">Faraday Cage</div>
               <div class="env-desc">0 AP silence</div>
             </button>
@@ -353,7 +353,7 @@
           type="text"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Try: help, scan, env con, pwn, peer, snack, inject WuTangLAN, ascii..."
+          placeholder="Try: help, scan, env con, pwn, peer, snack, inject ShadowClanLAN, ascii..."
         />
       </form>
     </section>
