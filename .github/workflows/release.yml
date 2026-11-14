@@ -61,6 +61,9 @@ jobs:
       - name: Install PlatformIO & esptool
         run: |
           pip install "platformio==6.1.16" "esptool==4.8.1"
+          echo "$(python -c 'import sysconfig; print(sysconfig.get_path("scripts"))')" >> "$GITHUB_PATH"
+          pio --version
+          esptool.py version
 
       - name: Cache PlatformIO packages
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
